@@ -1,5 +1,8 @@
 package com.cardejibka.ailib.utils;
 
+import net.fabricmc.api.EnvType;
+import net.fabricmc.loader.api.FabricLoader;
+
 import javax.sound.sampled.*;
 import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
@@ -7,27 +10,53 @@ import java.nio.file.Path;
 
 public class AudioHelper {
 
-    /**
-     * Сохраняет байты в WAV-файл (перезаписывает при наличии) и воспроизводит звук.
-     */
-    public static void playAndSave(byte[] wavBytes, Path savePath) {
-        if (wavBytes == null || wavBytes.length == 0) return;
+    public static boolean isClientEnvironment() {
+        return FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT;
+    }
+
+    public static boolean playAndSave(byte[] wavBytes, Path savePath) {
+        if (wavBytes == null || wavBytes.length == 0) return false;
+
         try {
             Files.write(savePath, wavBytes);
-
-            AudioInputStream audioInputStream = AudioSystem.getAudioInputStream(new ByteArrayInputStream(wavBytes));
-            Clip clip = AudioSystem.getClip();
-            clip.open(audioInputStream);
-            clip.start();
         } catch (Exception e) {
             e.printStackTrace();
+            return false;
+        }
+
+        if (!isClientEnvironment()) {
+            // На выделенном сервере просто сохраняем файл, играть звук некому и не на чем.
+            return true;
+        }
+
+        try {
+            AudioInputStream audioInputStream = AudioSystem.getAudioInputStream(new ByteArrayInputStream(wavBytes));
+            Clip clip = AudioSystem.getClip();
+
+            clip.addLineListener(event -> {
+                if (event.getType() == LineEvent.Type.STOP) {
+                    clip.close();
+                    try {
+                        audioInputStream.close();
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
+
+            clip.open(audioInputStream);
+            clip.start();
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
         }
     }
 
-    /**
-     * Записывает звук с микрофона (16kHz, 16-bit, Mono PCM) в указанный файл.
-     */
     public static void recordMic(Path outputPath, int durationSeconds) throws Exception {
+        if (!isClientEnvironment()) {
+            throw new IllegalStateException("Запись с микрофона доступна только на клиенте.");
+        }
+
         AudioFormat format = new AudioFormat(16000, 16, 1, true, false);
         DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
 
@@ -45,11 +74,16 @@ public class AudioHelper {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        });
+        }, "AiLib-Mic-Recorder");
         recordingThread.start();
 
-        Thread.sleep(durationSeconds * 1000L);
-        line.stop();
-        line.close();
+        try {
+            Thread.sleep(durationSeconds * 1000L);
+        } finally {
+            line.stop();
+            line.close();
+            // Даём потоку записи время дописать и корректно закрыть WAV-файл.
+            recordingThread.join(2000);
+        }
     }
 }

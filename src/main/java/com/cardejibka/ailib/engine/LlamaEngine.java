@@ -1,5 +1,6 @@
 package com.cardejibka.ailib.engine;
 
+import com.cardejibka.ailib.AiLibExecutors;
 import com.cardejibka.ailib.downloader.NativeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,9 +19,16 @@ public class LlamaEngine {
     private static final Logger LOGGER = LoggerFactory.getLogger("AiLib-LLM");
     private static final String RESPONSE_MARKER = "###RESPONSE###";
 
+    public static boolean isReady() {
+        Path llamaDir = NativeConfig.AiModule.LLM.getDir();
+        Path llamaCli = llamaDir.resolve(NativeConfig.AiModule.LLM.getExpectedFile());
+        Path modelPath = NativeConfig.getModelsDir().resolve(NativeConfig.ModelFile.LLM_MODEL.getFileName());
+        return Files.exists(llamaCli) && Files.exists(modelPath);
+    }
+
     public static String generate(String prompt) {
-        Path llamaDir = NativeConfig.AiModule.LLM.getDir(); // Папка ai_natives
-        Path llamaCli = llamaDir.resolve("llama-cli.exe");
+        Path llamaDir = NativeConfig.AiModule.LLM.getDir();
+        Path llamaCli = llamaDir.resolve(NativeConfig.AiModule.LLM.getExpectedFile());
         Path modelPath = NativeConfig.getModelsDir().resolve(NativeConfig.ModelFile.LLM_MODEL.getFileName());
 
         if (!Files.exists(llamaCli) || !Files.exists(modelPath)) {
@@ -28,46 +36,50 @@ public class LlamaEngine {
             return "Ошибка: Модель или llama-cli отсутствуют.";
         }
 
-        LOGGER.info("[LLM] Генерация ответа на промпт: \"{}\"", prompt);
-
-        StringBuilder fullPrompt = new StringBuilder();
-        fullPrompt.append("<|start_header_id|>system<|end_header_id|>\n")
-                .append("Ты полезный ассистент. Отвечай кратко, четко и на русском языке.<|eot_id|>\n")
-                .append("<|start_header_id|>user<|end_header_id|>\n")
-                .append(prompt)
-                .append("<|eot_id|>\n")
-                .append("<|start_header_id|>assistant<|end_header_id|>\n")
-                .append(RESPONSE_MARKER);
-
-        List<String> command = new ArrayList<>();
-        command.add(llamaCli.toAbsolutePath().toString());
-
-        // Исправление кириллицы: передаем путь к модели относительно ai_natives
-        command.add("-m");
-        command.add(llamaDir.toAbsolutePath().relativize(modelPath.toAbsolutePath()).toString());
-
-        // Отключаем лишние логи llama.cpp, чтобы упростить парсинг ответа
-        command.add("--log-disable");
-
-        command.add("-p");
-        command.add(fullPrompt.toString());
-        command.add("-n");
-        command.add("128");
-        command.add("-c");
-        command.add("2048");
-        command.add("--temp");
-        command.add("0.6");
-
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.directory(llamaDir.toFile());
-
-        // Перенаправляем вывод ошибок (stderr со статистикой llama.cpp) в "мусорную корзину",
-        // чтобы он не смешивался с чистым текстом ответа из stdout
-        pb.redirectError(ProcessBuilder.Redirect.DISCARD);
-
-        StringBuilder outputBuffer = new StringBuilder();
+        boolean acquired;
+        try {
+            acquired = AiLibExecutors.LLM_SLOT.tryAcquire(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "Ошибка: ожидание своей очереди было прервано.";
+        }
+        if (!acquired) {
+            return "Сейчас уже выполняется другой запрос к LLM, попробуйте чуть позже.";
+        }
 
         try {
+            LOGGER.info("[LLM] Генерация ответа на промпт: \"{}\"", prompt);
+
+            String fullPrompt = "<|start_header_id|>system<|end_header_id|>\n" +
+                    "Ты полезный ассистент. Отвечай кратко, четко и на русском языке.<|eot_id|>\n" +
+                    "<|start_header_id|>user<|end_header_id|>\n" +
+                    prompt +
+                    "<|eot_id|>\n" +
+                    "<|start_header_id|>assistant<|end_header_id|>\n" +
+                    RESPONSE_MARKER;
+
+            List<String> command = new ArrayList<>();
+            command.add(llamaCli.toAbsolutePath().toString());
+            command.add("-m");
+            command.add(relativeOrAbsolute(llamaCli.getParent(), modelPath));
+            command.add("--log-disable");
+            command.add("-p");
+            command.add(fullPrompt);
+            command.add("-n");
+            command.add("128");
+            command.add("-c");
+            command.add("2048");
+            command.add("--temp");
+            command.add("0.6");
+
+            ProcessBuilder pb = new ProcessBuilder(command);
+            // Рабочая директория = папка самого бинарника (на Linux llama-cli лежит в
+            // build/bin/ вместе с .so-библиотеками, а не в корне модуля).
+            pb.directory(llamaCli.getParent().toFile());
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+
+            StringBuilder outputBuffer = new StringBuilder();
+
             Process process = pb.start();
             process.getOutputStream().close();
 
@@ -81,7 +93,7 @@ public class LlamaEngine {
                 } catch (Exception e) {
                     LOGGER.error("[LLM Error] Ошибка чтения потока llama-cli", e);
                 }
-            });
+            }, AiLibExecutors.IO_EXECUTOR);
 
             boolean completed = process.waitFor(35, TimeUnit.SECONDS);
             if (!completed) {
@@ -91,32 +103,34 @@ public class LlamaEngine {
 
             readTask.join();
             String cleanAnswer = extractAnswer(outputBuffer.toString());
-
             return cleanAnswer.isEmpty() ? "LLM завершилась без ответа." : cleanAnswer;
 
         } catch (Exception e) {
             LOGGER.error("[LLM Exception]", e);
             return "Исключение LLM: " + e.getMessage();
+        } finally {
+            AiLibExecutors.LLM_SLOT.release();
+        }
+    }
+
+    private static String relativeOrAbsolute(Path base, Path target) {
+        try {
+            return base.toAbsolutePath().relativize(target.toAbsolutePath()).toString();
+        } catch (IllegalArgumentException e) {
+            return target.toAbsolutePath().toString();
         }
     }
 
     private static String extractAnswer(String rawOutput) {
-        // Удаляем ANSI-escape последовательности (цветовые коды консоли)
         String clean = rawOutput.replaceAll("\u001B\\[[;\\d]*[ -/]*[@-~]", "");
-        if (!clean.contains(RESPONSE_MARKER)) return clean.trim(); // Если маркера нет, отдаем что есть
+        if (!clean.contains(RESPONSE_MARKER)) return clean.trim();
 
         String answerPart = clean.substring(clean.indexOf(RESPONSE_MARKER) + RESPONSE_MARKER.length());
 
-        // Обрезаем служебные теги
         if (answerPart.contains("<|eot_id|>")) answerPart = answerPart.substring(0, answerPart.indexOf("<|eot_id|>"));
         if (answerPart.contains("<|im_end|>")) answerPart = answerPart.substring(0, answerPart.indexOf("<|im_end|>"));
+        if (answerPart.contains("[ Prompt:")) answerPart = answerPart.substring(0, answerPart.indexOf("[ Prompt:"));
 
-        // Если статистика логирования всё-таки попала в текст, отсекаем её
-        if (answerPart.contains("[ Prompt:")) {
-            answerPart = answerPart.substring(0, answerPart.indexOf("[ Prompt:"));
-        }
-
-        // Очищаем символ возврата каретки, пробелы по краям и лишние символы '#'
         return answerPart.replaceAll("\r", "").trim().replaceAll("^#+|#+$", "").trim();
     }
 }

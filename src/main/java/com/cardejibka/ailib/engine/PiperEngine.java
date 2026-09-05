@@ -1,5 +1,6 @@
 package com.cardejibka.ailib.engine;
 
+import com.cardejibka.ailib.AiLibExecutors;
 import com.cardejibka.ailib.downloader.NativeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,63 +11,73 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 public class PiperEngine {
     private static final Logger LOGGER = LoggerFactory.getLogger("AiLib-TTS");
 
+    public static boolean isReady() {
+        Path piperDir = NativeConfig.AiModule.TTS.getDir();
+        Path piperExe = piperDir.resolve(NativeConfig.AiModule.TTS.getExpectedFile());
+        Path modelPath = NativeConfig.getModelsDir().resolve(NativeConfig.ModelFile.TTS_MODEL.getFileName());
+        return Files.exists(piperExe) && Files.exists(modelPath);
+    }
+
     public static byte[] synthesize(String text) {
         Path piperDir = NativeConfig.AiModule.TTS.getDir();
-        Path piperExe = piperDir.resolve("piper.exe");
+        Path piperExe = piperDir.resolve(NativeConfig.AiModule.TTS.getExpectedFile());
 
         if (!Files.exists(piperExe)) {
-            LOGGER.error("[TTS Error] piper.exe не найден в {}", piperDir.toAbsolutePath());
+            LOGGER.error("[TTS Error] Бинарник piper не найден в {}", piperExe.toAbsolutePath());
             return new byte[0];
         }
 
         Path modelPath = NativeConfig.getModelsDir().resolve(NativeConfig.ModelFile.TTS_MODEL.getFileName());
         Path configPath = NativeConfig.getModelsDir().resolve(NativeConfig.ModelFile.TTS_CONFIG.getFileName());
-        Path outputFile = piperDir.resolve("temp_tts.wav");
+        // Уникальное имя, чтобы параллельные (пусть и сериализованные семафором) вызовы
+        // не затирали файл друг друга и не путали результаты между собой.
+        Path outputFile = piperDir.resolve("temp_tts_" + UUID.randomUUID() + ".wav");
         Path espeakDir = piperDir.resolve("espeak-ng-data");
         Path tashkeelModel = piperDir.resolve("libtashkeel_model.ort");
 
+        boolean acquired;
         try {
-            Files.deleteIfExists(outputFile);
-        } catch (Exception ignored) {}
-
-        LOGGER.info("[TTS] Генерация речи для: \"{}\"", text);
-
-        List<String> command = new ArrayList<>();
-
-        // Сам бинарник можно передать абсолютным путем, ОС запустит его корректно
-        command.add(piperExe.toAbsolutePath().toString());
-
-        // А вот аргументы передаем ОТНОСИТЕЛЬНО рабочей папки piperDir
-        command.add("--model");
-        command.add(piperDir.relativize(modelPath).toString()); // Получится ..\ai_models\имя.onnx
-
-        command.add("--config");
-        command.add(piperDir.relativize(configPath).toString());
-
-        command.add("--output_file");
-        command.add(piperDir.relativize(outputFile).toString()); // Получится просто temp_tts.wav
-
-        command.add("--espeak_data");
-        command.add(piperDir.relativize(espeakDir).toString()); // Получится просто espeak-ng-data
-
-        if (Files.exists(tashkeelModel)) {
-            command.add("--tashkeel_model");
-            command.add(piperDir.relativize(tashkeelModel).toString());
+            acquired = AiLibExecutors.TTS_SLOT.tryAcquire(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return new byte[0];
+        }
+        if (!acquired) {
+            LOGGER.warn("[TTS] Другой синтез уже выполняется, запрос отклонён.");
+            return new byte[0];
         }
 
-        ProcessBuilder pb = new ProcessBuilder(command);
-        // Фиксируем рабочую директорию, чтобы относительные пути сработали
-        pb.directory(piperDir.toFile());
-
         try {
+            LOGGER.info("[TTS] Генерация речи для: \"{}\"", text);
+
+            List<String> command = new ArrayList<>();
+            command.add(piperExe.toAbsolutePath().toString());
+            command.add("--model");
+            command.add(relativeOrAbsolute(piperDir, modelPath));
+            command.add("--config");
+            command.add(relativeOrAbsolute(piperDir, configPath));
+            command.add("--output_file");
+            command.add(relativeOrAbsolute(piperDir, outputFile));
+            if (Files.exists(espeakDir)) {
+                command.add("--espeak_data");
+                command.add(relativeOrAbsolute(piperDir, espeakDir));
+            }
+            if (Files.exists(tashkeelModel)) {
+                command.add("--tashkeel_model");
+                command.add(relativeOrAbsolute(piperDir, tashkeelModel));
+            }
+
+            ProcessBuilder pb = new ProcessBuilder(command);
+            pb.directory(piperDir.toFile());
+
             Process process = pb.start();
 
-            // Передача текста через UTF-8
             try (OutputStream os = process.getOutputStream();
                  BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8))) {
                 writer.write(text);
@@ -81,8 +92,9 @@ public class PiperEngine {
                     while ((line = reader.readLine()) != null) {
                         stderr.append(line).append("\n");
                     }
-                } catch (Exception ignored) {}
-            });
+                } catch (Exception ignored) {
+                }
+            }, "AiLib-TTS-stderr");
             errThread.start();
 
             boolean finished = process.waitFor(15, TimeUnit.SECONDS);
@@ -100,13 +112,26 @@ public class PiperEngine {
             }
 
             byte[] bytes = Files.readAllBytes(outputFile);
-            Files.deleteIfExists(outputFile);
             LOGGER.info("[TTS Success] Синтезировано {} байт.", bytes.length);
             return bytes;
 
         } catch (Exception e) {
             LOGGER.error("[TTS Critical Error]", e);
             return new byte[0];
+        } finally {
+            try {
+                Files.deleteIfExists(outputFile);
+            } catch (Exception ignored) {
+            }
+            AiLibExecutors.TTS_SLOT.release();
+        }
+    }
+
+    private static String relativeOrAbsolute(Path base, Path target) {
+        try {
+            return base.toAbsolutePath().relativize(target.toAbsolutePath()).toString();
+        } catch (IllegalArgumentException e) {
+            return target.toAbsolutePath().toString();
         }
     }
 }
