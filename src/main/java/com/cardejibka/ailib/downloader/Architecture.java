@@ -17,9 +17,9 @@ public enum Architecture {
     }
 
     public static Architecture detect() {
-        String arch = System.getProperty("os.arch").toLowerCase(Locale.ROOT);
+        String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
         if (arch.contains("aarch64") || arch.contains("arm64")) return ARM64;
-        if (arch.contains("amd64") || arch.contains("x86_64")) return X64;
-        throw new UnsupportedOperationException("Неподдерживаемая архитектура: " + arch);
+        if (arch.contains("amd64") || arch.contains("x86_64") || arch.contains("x64")) return X64;
+        throw new UnsupportedOperationException("Неподдерживаемая архитектура процессора: " + arch);
     }
 }

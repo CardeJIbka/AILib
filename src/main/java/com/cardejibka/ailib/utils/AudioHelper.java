@@ -24,15 +24,11 @@ public class AudioHelper {
             return false;
         }
 
-        if (!isClientEnvironment()) {
-            // На выделенном сервере просто сохраняем файл, играть звук некому и не на чем.
-            return true;
-        }
+        if (!isClientEnvironment()) return true;
 
         try {
             AudioInputStream audioInputStream = AudioSystem.getAudioInputStream(new ByteArrayInputStream(wavBytes));
             Clip clip = AudioSystem.getClip();
-
             clip.addLineListener(event -> {
                 if (event.getType() == LineEvent.Type.STOP) {
                     clip.close();
@@ -42,7 +38,6 @@ public class AudioHelper {
                     }
                 }
             });
-
             clip.open(audioInputStream);
             clip.start();
             return true;
@@ -59,7 +54,6 @@ public class AudioHelper {
 
         AudioFormat format = new AudioFormat(16000, 16, 1, true, false);
         DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
-
         if (!AudioSystem.isLineSupported(info)) {
             throw new Exception("Микрофон не найден или не поддерживается!");
         }
@@ -82,7 +76,6 @@ public class AudioHelper {
         } finally {
             line.stop();
             line.close();
-            // Даём потоку записи время дописать и корректно закрыть WAV-файл.
             recordingThread.join(2000);
         }
     }

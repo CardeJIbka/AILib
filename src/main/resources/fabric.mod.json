@@ -2,17 +2,21 @@
 	"schemaVersion": 1,
 	"id": "ailib",
 	"version": "${version}",
+
 	"name": "AI Lib",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "Библиотека для Fabric-модов, добавляющая локальный LLM (llama.cpp), синтез речи (piper) и распознавание речи (whisper.cpp) без внешних облачных сервисов. Скачивает нужные бинарники и модели самостоятельно при первом запуске.",
 	"authors": [
-		"Me!"
+		"CardeJIbka"
 	],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"homepage": "https://github.com/cardejibka/ailib",
+		"sources": "https://github.com/cardejibka/ailib",
+		"issues": "https://github.com/cardejibka/ailib/issues"
 	},
+
 	"license": "CC0-1.0",
 	"icon": "assets/ailib/icon.png",
+
 	"environment": "*",
 	"entrypoints": {
 		"main": [
@@ -22,17 +26,11 @@
 			"com.cardejibka.ailib.client.AiLibClient"
 		]
 	},
-	"mixins": [
-		"ailib.mixins.json",
-		{
-			"config": "ailib.client.mixins.json",
-			"environment": "client"
-		}
-	],
+
 	"depends": {
 		"fabricloader": ">=0.19.5",
-		"minecraft": "~1.21",
+		"minecraft": ">=1.21- <1.22-",
 		"java": ">=21",
-		"fabric-api": "*"
+		"fabric-api": ">=0.102.0"
 	}
 }

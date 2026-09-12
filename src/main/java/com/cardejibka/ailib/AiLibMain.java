@@ -1,10 +1,7 @@
 package com.cardejibka.ailib;
 
-import com.cardejibka.ailib.downloader.ModelDownloader;
-import com.cardejibka.ailib.downloader.NativeDownloader;
-import com.cardejibka.ailib.engine.LlamaEngine;
-import com.cardejibka.ailib.engine.PiperEngine;
-import com.cardejibka.ailib.engine.WhisperEngine;
+import com.cardejibka.ailib.api.AiLib;
+import com.cardejibka.ailib.api.AiLibException;
 import com.cardejibka.ailib.utils.AudioHelper;
 
 import com.mojang.brigadier.CommandDispatcher;
@@ -24,54 +21,22 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class AiLibMain implements ModInitializer {
     public static final String MOD_ID = "ailib";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-    private static volatile boolean ready = false;
-    private static final AtomicBoolean preparing = new AtomicBoolean(false);
-
     @Override
     public void onInitialize() {
-        LOGGER.info("Инициализация AiLib Common...");
+        LOGGER.info("Инициализация AiLib...");
+
+        // Запускает параллельную фоновую загрузку нативов и моделей по умолчанию.
+        // Не блокирует — метод возвращается сразу, игра грузится дальше как обычно.
+        // Прогресс каждого артефакта летит в ProgressBus (см. downloader-пакет),
+        // откуда его на клиенте подхватывает HUD.
+        AiLib.bootstrapDefaults();
 
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> registerCommands(dispatcher));
-
-        prepareEverythingAsync();
-    }
-
-    public static boolean isReady() {
-        return ready;
-    }
-
-    /** Можно вызывать повторно (например, командой) — если уже готово или уже качается, ничего не сломает. */
-    public static CompletableFuture<Void> prepareEverythingAsync() {
-        if (!preparing.compareAndSet(false, true)) {
-            LOGGER.info("Подготовка AiLib уже выполняется.");
-            return CompletableFuture.completedFuture(null);
-        }
-
-        return CompletableFuture
-                .supplyAsync(() -> NativeDownloader.prepareAndLoadAllNatives(), AiLibExecutors.IO_EXECUTOR)
-                .thenCombine(
-                        CompletableFuture.supplyAsync(ModelDownloader::prepareModels, AiLibExecutors.IO_EXECUTOR),
-                        (nativesOk, modelsOk) -> nativesOk && modelsOk)
-                .thenAccept(allOk -> {
-                    ready = allOk;
-                    if (allOk) {
-                        LOGGER.info("AiLib готов к работе: нативы и модели загружены.");
-                    } else {
-                        LOGGER.error("AiLib не смог подготовить все компоненты. Команды llm/tts/stt могут не работать.");
-                    }
-                })
-                .whenComplete((v, err) -> {
-                    if (err != null) {
-                        LOGGER.error("Ошибка подготовки AiLib", err);
-                    }
-                    preparing.set(false);
-                });
     }
 
     private Path getTempDir() {
@@ -94,14 +59,15 @@ public class AiLibMain implements ModInitializer {
                                     CommandSourceStack source = context.getSource();
                                     String prompt = StringArgumentType.getString(context, "prompt");
 
-                                    if (!requireReady(source)) return 0;
-
                                     source.sendSuccess(() -> Component.literal("§7[LLM] Генерация ответа..."), false);
-
                                     CompletableFuture.runAsync(() -> {
-                                        String response = LlamaEngine.generate(prompt);
-                                        source.sendSuccess(() -> Component.literal("§a[LLM Ответ]: §f" + response), false);
-                                    }, AiLibExecutors.IO_EXECUTOR);
+                                        try {
+                                            String response = AiLib.generate(prompt);
+                                            source.sendSuccess(() -> Component.literal("§a[LLM Ответ]: §f" + response), false);
+                                        } catch (AiLibException e) {
+                                            source.sendFailure(Component.literal("§c[LLM]: " + describe(e)));
+                                        }
+                                    }, AiLibExecutors.PROCESS_IO_EXECUTOR);
 
                                     return 1;
                                 })
@@ -113,23 +79,19 @@ public class AiLibMain implements ModInitializer {
                                     CommandSourceStack source = context.getSource();
                                     String text = StringArgumentType.getString(context, "text");
 
-                                    if (!requireReady(source)) return 0;
-
                                     source.sendSuccess(() -> Component.literal("§7[TTS] Синтез речи..."), false);
-
                                     CompletableFuture.runAsync(() -> {
-                                        byte[] wavData = PiperEngine.synthesize(text);
-                                        if (wavData.length > 0) {
+                                        try {
+                                            byte[] wavData = AiLib.synthesize(text);
                                             Path outputPath = getTempDir().resolve("output.wav");
                                             boolean played = AudioHelper.playAndSave(wavData, outputPath);
                                             String suffix = played ? "и воспроизводится." : "(воспроизведение недоступно на этой стороне).";
                                             source.sendSuccess(() -> Component.literal(
-                                                    "§a[TTS]: §fСинтезировано " + wavData.length +
-                                                            " байт, сохранено в " + outputPath + " " + suffix), false);
-                                        } else {
-                                            source.sendFailure(Component.literal("§c[TTS Error]: Не удалось сгенерировать аудио."));
+                                                    "§a[TTS]: §fСинтезировано " + wavData.length + " байт, сохранено в " + outputPath + " " + suffix), false);
+                                        } catch (AiLibException e) {
+                                            source.sendFailure(Component.literal("§c[TTS]: " + describe(e)));
                                         }
-                                    }, AiLibExecutors.IO_EXECUTOR);
+                                    }, AiLibExecutors.PROCESS_IO_EXECUTOR);
 
                                     return 1;
                                 })
@@ -141,24 +103,23 @@ public class AiLibMain implements ModInitializer {
                                     CommandSourceStack source = context.getSource();
                                     String filePathStr = StringArgumentType.getString(context, "filePath");
 
-                                    if (!requireReady(source)) return 0;
-
                                     source.sendSuccess(() -> Component.literal("§7[STT] Распознавание файла..."), false);
-
                                     CompletableFuture.runAsync(() -> {
-                                        Path wavPath = Path.of(filePathStr);
-                                        String text = WhisperEngine.transcribe(wavPath);
-                                        source.sendSuccess(() -> Component.literal("§a[STT Текст]: §f" + text), false);
-                                    }, AiLibExecutors.IO_EXECUTOR);
+                                        try {
+                                            String text = AiLib.transcribe(Path.of(filePathStr));
+                                            source.sendSuccess(() -> Component.literal("§a[STT Текст]: §f" + text), false);
+                                        } catch (AiLibException e) {
+                                            source.sendFailure(Component.literal("§c[STT]: " + describe(e)));
+                                        }
+                                    }, AiLibExecutors.PROCESS_IO_EXECUTOR);
 
                                     return 1;
                                 })
                         )
                 );
 
-        // record / ask используют микрофон и воспроизведение — это чисто клиентские
-        // операции. Раньше их можно было вызвать и на выделенном сервере, получив
-        // невнятную ошибку javax.sound.sampled в консоли вместо понятного отказа.
+        // record/ask используют микрофон и воспроизведение — чисто клиентские
+        // операции, поэтому регистрируются только там.
         if (isClient) {
             ailibRoot
                     .then(Commands.literal("record")
@@ -167,24 +128,22 @@ public class AiLibMain implements ModInitializer {
                                         CommandSourceStack source = context.getSource();
                                         int seconds = IntegerArgumentType.getInteger(context, "seconds");
 
-                                        if (!requireReady(source)) return 0;
-
-                                        source.sendSuccess(() -> Component.literal(
-                                                "§7[Микрофон] Запись " + seconds + " сек..."), false);
-
+                                        source.sendSuccess(() -> Component.literal("§7[Микрофон] Запись " + seconds + " сек..."), false);
                                         CompletableFuture.runAsync(() -> {
                                             try {
                                                 Path micPath = getTempDir().resolve("mic_input.wav");
                                                 AudioHelper.recordMic(micPath, seconds);
 
                                                 source.sendSuccess(() -> Component.literal("§7[Микрофон] Распознавание..."), false);
-                                                String text = WhisperEngine.transcribe(micPath);
+                                                String text = AiLib.transcribe(micPath);
                                                 source.sendSuccess(() -> Component.literal("§a[Вы сказали]: §f" + text), false);
+                                            } catch (AiLibException e) {
+                                                source.sendFailure(Component.literal("§c[Микрофон]: " + describe(e)));
                                             } catch (Exception e) {
                                                 LOGGER.error("[AiLib] Ошибка записи с микрофона", e);
                                                 source.sendFailure(Component.literal("§c[Ошибка микрофона]: " + e.getMessage()));
                                             }
-                                        }, AiLibExecutors.IO_EXECUTOR);
+                                        }, AiLibExecutors.PROCESS_IO_EXECUTOR);
 
                                         return 1;
                                     })
@@ -196,36 +155,30 @@ public class AiLibMain implements ModInitializer {
                                         CommandSourceStack source = context.getSource();
                                         int seconds = IntegerArgumentType.getInteger(context, "seconds");
 
-                                        if (!requireReady(source)) return 0;
-
-                                        source.sendSuccess(() -> Component.literal(
-                                                "§7[Ask] Запись " + seconds + " сек..."), false);
-
+                                        source.sendSuccess(() -> Component.literal("§7[Ask] Запись " + seconds + " сек..."), false);
                                         CompletableFuture.runAsync(() -> {
                                             try {
                                                 Path micPath = getTempDir().resolve("mic_input.wav");
                                                 AudioHelper.recordMic(micPath, seconds);
 
                                                 source.sendSuccess(() -> Component.literal("§7[Ask] Распознавание..."), false);
-                                                String recognizedText = WhisperEngine.transcribe(micPath);
+                                                String recognizedText = AiLib.transcribe(micPath);
                                                 source.sendSuccess(() -> Component.literal("§7[Вы сказали]: §f" + recognizedText), false);
 
                                                 source.sendSuccess(() -> Component.literal("§7[Ask] Генерация ответа..."), false);
-                                                String response = LlamaEngine.generate(recognizedText);
+                                                String response = AiLib.generate(recognizedText);
                                                 source.sendSuccess(() -> Component.literal("§a[LLM Ответ]: §f" + response), false);
 
-                                                byte[] wavData = PiperEngine.synthesize(response);
-                                                if (wavData.length > 0) {
-                                                    Path outputPath = getTempDir().resolve("output.wav");
-                                                    AudioHelper.playAndSave(wavData, outputPath);
-                                                } else {
-                                                    source.sendFailure(Component.literal("§c[TTS Error]: Не удалось озвучить ответ."));
-                                                }
+                                                byte[] wavData = AiLib.synthesize(response);
+                                                Path outputPath = getTempDir().resolve("output.wav");
+                                                AudioHelper.playAndSave(wavData, outputPath);
+                                            } catch (AiLibException e) {
+                                                source.sendFailure(Component.literal("§c[Ask]: " + describe(e)));
                                             } catch (Exception e) {
                                                 LOGGER.error("[AiLib] Ошибка выполнения команды ask", e);
                                                 source.sendFailure(Component.literal("§c[Ask Error]: " + e.getMessage()));
                                             }
-                                        }, AiLibExecutors.IO_EXECUTOR);
+                                        }, AiLibExecutors.PROCESS_IO_EXECUTOR);
 
                                         return 1;
                                     })
@@ -236,12 +189,10 @@ public class AiLibMain implements ModInitializer {
         dispatcher.register(ailibRoot);
     }
 
-    private boolean requireReady(CommandSourceStack source) {
-        if (!ready) {
-            source.sendFailure(Component.literal(
-                    "§c[AiLib]: Модели/бинарники ещё не готовы (идёт первичная загрузка или она не удалась). Смотрите логи."));
-            return false;
+    private static String describe(AiLibException e) {
+        if (e.getReason() == AiLibException.Reason.NOT_READY && e.getProgressPercent() >= 0) {
+            return e.getMessage() + " (" + e.getProgressPercent() + "%)";
         }
-        return true;
+        return e.getMessage();
     }
 }

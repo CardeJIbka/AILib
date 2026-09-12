@@ -6,7 +6,6 @@ import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.Map;
 
-
 public class NativeConfig {
 
     public record PlatformBinary(String downloadUrl, String expectedFile) {}
@@ -17,7 +16,6 @@ public class NativeConfig {
         TTS("piper", true, buildPiperBinaries());
 
         private final String id;
-
         private final boolean stripRootFolder;
         private final Map<OperatingSystem, PlatformBinary> binaries;
 
@@ -40,8 +38,7 @@ public class NativeConfig {
             PlatformBinary binary = binaries.get(os);
             if (binary == null) {
                 throw new UnsupportedOperationException(
-                        "Модуль '" + id + "' пока не поддерживает ОС " + os.getId()
-                                + ". Поддерживаются: " + binaries.keySet());
+                        "Модуль '" + id + "' не поддерживает ОС " + os.getId());
             }
             return binary;
         }
@@ -55,7 +52,8 @@ public class NativeConfig {
         }
 
         public String getArchiveName() {
-            return id + "-native.zip";
+            String url = getDownloadUrl();
+            return id + "-native" + (url.endsWith(".tar.gz") ? ".tar.gz" : ".zip");
         }
 
         public Path getDir() {
@@ -71,7 +69,6 @@ public class NativeConfig {
         map.put(OperatingSystem.LINUX, new PlatformBinary(
                 "https://github.com/ggml-org/llama.cpp/releases/download/b10549/llama-b10549-bin-ubuntu-x64.zip",
                 "build/bin/llama-cli"));
-        // На macOS доступны отдельные сборки под Apple Silicon и Intel.
         map.put(OperatingSystem.MACOS, Architecture.detect() == Architecture.ARM64
                 ? new PlatformBinary(
                 "https://github.com/ggml-org/llama.cpp/releases/download/b10549/llama-b10549-bin-macos-arm64.zip",
@@ -112,33 +109,6 @@ public class NativeConfig {
                 "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_macos_x64.tar.gz",
                 "piper"));
         return map;
-    }
-
-    public enum ModelFile {
-        LLM_MODEL("Llama-3.2-1B-Instruct-Q4_K_M.gguf",
-                "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf"),
-        STT_MODEL("ggml-tiny.bin",
-                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"),
-        TTS_MODEL("ru_RU-dmitri-medium.onnx",
-                "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx"),
-        TTS_CONFIG("ru_RU-dmitri-medium.onnx.json",
-                "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx.json");
-
-        private final String fileName;
-        private final String downloadUrl;
-
-        ModelFile(String fileName, String downloadUrl) {
-            this.fileName = fileName;
-            this.downloadUrl = downloadUrl;
-        }
-
-        public String getFileName() {
-            return fileName;
-        }
-
-        public String getDownloadUrl() {
-            return downloadUrl;
-        }
     }
 
     public static Path getNativesDir() {

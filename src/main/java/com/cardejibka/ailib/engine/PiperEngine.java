@@ -1,6 +1,8 @@
 package com.cardejibka.ailib.engine;
 
 import com.cardejibka.ailib.AiLibExecutors;
+import com.cardejibka.ailib.api.AiLibException;
+import com.cardejibka.ailib.api.TtsEngine;
 import com.cardejibka.ailib.downloader.NativeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,54 +16,52 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
-public class PiperEngine {
+public class PiperEngine implements TtsEngine {
     private static final Logger LOGGER = LoggerFactory.getLogger("AiLib-TTS");
 
-    public static boolean isReady() {
+    @Override
+    public boolean isNativeReady() {
         Path piperDir = NativeConfig.AiModule.TTS.getDir();
-        Path piperExe = piperDir.resolve(NativeConfig.AiModule.TTS.getExpectedFile());
-        Path modelPath = NativeConfig.getModelsDir().resolve(NativeConfig.ModelFile.TTS_MODEL.getFileName());
-        return Files.exists(piperExe) && Files.exists(modelPath);
+        return Files.exists(piperDir.resolve(NativeConfig.AiModule.TTS.getExpectedFile()));
     }
 
-    public static byte[] synthesize(String text) {
+    @Override
+    public byte[] synthesize(String text, Path voiceModelPath) {
         Path piperDir = NativeConfig.AiModule.TTS.getDir();
         Path piperExe = piperDir.resolve(NativeConfig.AiModule.TTS.getExpectedFile());
 
         if (!Files.exists(piperExe)) {
-            LOGGER.error("[TTS Error] Бинарник piper не найден в {}", piperExe.toAbsolutePath());
-            return new byte[0];
+            throw new AiLibException(AiLibException.Reason.NOT_READY, "Бинарник piper не найден");
+        }
+        if (!Files.exists(voiceModelPath)) {
+            throw new AiLibException(AiLibException.Reason.NOT_READY, "Модель голоса не найдена: " + voiceModelPath);
         }
 
-        Path modelPath = NativeConfig.getModelsDir().resolve(NativeConfig.ModelFile.TTS_MODEL.getFileName());
-        Path configPath = NativeConfig.getModelsDir().resolve(NativeConfig.ModelFile.TTS_CONFIG.getFileName());
-        // Уникальное имя, чтобы параллельные (пусть и сериализованные семафором) вызовы
-        // не затирали файл друг друга и не путали результаты между собой.
+        Path configPath = voiceModelPath.resolveSibling(voiceModelPath.getFileName() + ".json");
         Path outputFile = piperDir.resolve("temp_tts_" + UUID.randomUUID() + ".wav");
         Path espeakDir = piperDir.resolve("espeak-ng-data");
         Path tashkeelModel = piperDir.resolve("libtashkeel_model.ort");
 
         boolean acquired;
         try {
-            acquired = AiLibExecutors.TTS_SLOT.tryAcquire(5, TimeUnit.SECONDS);
+            acquired = AiLibExecutors.TTS_SLOT.tryAcquire(30, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return new byte[0];
+            throw new AiLibException(AiLibException.Reason.BUSY, "Ожидание очереди было прервано");
         }
         if (!acquired) {
-            LOGGER.warn("[TTS] Другой синтез уже выполняется, запрос отклонён.");
-            return new byte[0];
+            throw new AiLibException(AiLibException.Reason.BUSY, "TTS занята другим запросом, попробуйте позже");
         }
 
         try {
-            LOGGER.info("[TTS] Генерация речи для: \"{}\"", text);
-
             List<String> command = new ArrayList<>();
             command.add(piperExe.toAbsolutePath().toString());
             command.add("--model");
-            command.add(relativeOrAbsolute(piperDir, modelPath));
-            command.add("--config");
-            command.add(relativeOrAbsolute(piperDir, configPath));
+            command.add(relativeOrAbsolute(piperDir, voiceModelPath));
+            if (Files.exists(configPath)) {
+                command.add("--config");
+                command.add(relativeOrAbsolute(piperDir, configPath));
+            }
             command.add("--output_file");
             command.add(relativeOrAbsolute(piperDir, outputFile));
             if (Files.exists(espeakDir)) {
@@ -75,7 +75,6 @@ public class PiperEngine {
 
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.directory(piperDir.toFile());
-
             Process process = pb.start();
 
             try (OutputStream os = process.getOutputStream();
@@ -89,9 +88,7 @@ public class PiperEngine {
             Thread errThread = new Thread(() -> {
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
                     String line;
-                    while ((line = reader.readLine()) != null) {
-                        stderr.append(line).append("\n");
-                    }
+                    while ((line = reader.readLine()) != null) stderr.append(line).append("\n");
                 } catch (Exception ignored) {
                 }
             }, "AiLib-TTS-stderr");
@@ -102,22 +99,20 @@ public class PiperEngine {
 
             if (!finished) {
                 process.destroyForcibly();
-                LOGGER.error("[TTS Timeout] Piper завис.");
-                return new byte[0];
+                throw new AiLibException(AiLibException.Reason.TIMEOUT, "Piper завис");
             }
-
             if (process.exitValue() != 0 || !Files.exists(outputFile)) {
-                LOGGER.error("[TTS Failure] Код ошибки: {}. Stderr:\n{}", process.exitValue(), stderr);
-                return new byte[0];
+                throw new AiLibException(AiLibException.Reason.PROCESS_FAILED,
+                        "Piper завершился с кодом " + process.exitValue() + ": " + stderr);
             }
 
-            byte[] bytes = Files.readAllBytes(outputFile);
-            LOGGER.info("[TTS Success] Синтезировано {} байт.", bytes.length);
-            return bytes;
+            return Files.readAllBytes(outputFile);
 
+        } catch (AiLibException e) {
+            throw e;
         } catch (Exception e) {
             LOGGER.error("[TTS Critical Error]", e);
-            return new byte[0];
+            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Исключение TTS: " + e.getMessage());
         } finally {
             try {
                 Files.deleteIfExists(outputFile);
