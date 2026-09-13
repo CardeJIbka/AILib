@@ -2,9 +2,11 @@ package com.cardejibka.ailib.downloader;
 
 import com.cardejibka.ailib.AiLibExecutors;
 import com.cardejibka.ailib.api.ModelSpec;
+import com.cardejibka.ailib.config.AiLibConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -114,6 +116,13 @@ public final class AiLibBootstrap {
      *         разных моделей, и нужно переименовать одну из них.
      */
     public static CompletableFuture<Boolean> ensureModelReady(ModelSpec spec) {
+        String host = URI.create(spec.url()).getHost();
+        if (!AiLibConfig.get().isDomainAllowed(host)) {
+            throw new IllegalArgumentException("Домен '" + host + "' не входит в allow-list "
+                    + "(config/ailib.json -> allowedModelDownloadDomains). Модель '" + spec.id()
+                    + "' не будет скачана, пока домен не разрешён явно.");
+        }
+
         String previousOwner = FILE_NAME_OWNER.putIfAbsent(spec.fileName(), spec.id());
         if (previousOwner != null && !previousOwner.equals(spec.id())) {
             throw new IllegalStateException("Коллизия имени файла модели '" + spec.fileName()

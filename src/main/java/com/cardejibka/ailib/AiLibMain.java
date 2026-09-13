@@ -2,6 +2,7 @@ package com.cardejibka.ailib;
 
 import com.cardejibka.ailib.api.AiLib;
 import com.cardejibka.ailib.api.AiLibException;
+import com.cardejibka.ailib.config.AiLibConfig;
 import com.cardejibka.ailib.utils.AudioHelper;
 
 import com.mojang.brigadier.CommandDispatcher;
@@ -29,6 +30,11 @@ public class AiLibMain implements ModInitializer {
     @Override
     public void onInitialize() {
         LOGGER.info("Инициализация AiLib...");
+
+        // Явно форсируем загрузку конфига первым делом — до того, как что-либо
+        // (executor'ы, движки) успеет запроситься с дефолтными значениями.
+        AiLibConfig.get();
+        LOGGER.info("Конфиг загружен из config/ailib.json");
 
         // Запускает параллельную фоновую загрузку нативов и моделей по умолчанию.
         // Не блокирует — метод возвращается сразу, игра грузится дальше как обычно.

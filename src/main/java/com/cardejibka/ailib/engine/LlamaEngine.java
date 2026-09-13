@@ -3,6 +3,7 @@ package com.cardejibka.ailib.engine;
 import com.cardejibka.ailib.AiLibExecutors;
 import com.cardejibka.ailib.api.AiLibException;
 import com.cardejibka.ailib.api.LlmEngine;
+import com.cardejibka.ailib.config.AiLibConfig;
 import com.cardejibka.ailib.downloader.NativeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,9 +50,10 @@ public class LlamaEngine implements LlmEngine {
 
         try {
             LOGGER.info("[LLM] Генерация ответа на промпт: \"{}\"", prompt);
+            AiLibConfig cfg = AiLibConfig.get();
 
             String fullPrompt = "<|start_header_id|>system<|end_header_id|>\n" +
-                    "Ты полезный ассистент. Отвечай кратко, четко.<|eot_id|>\n" +
+                    cfg.llmSystemPrompt + "<|eot_id|>\n" +
                     "<|start_header_id|>user<|end_header_id|>\n" +
                     prompt +
                     "<|eot_id|>\n" +
@@ -66,11 +68,11 @@ public class LlamaEngine implements LlmEngine {
             command.add("-p");
             command.add(fullPrompt);
             command.add("-n");
-            command.add("128");
+            command.add(String.valueOf(cfg.llmMaxTokens));
             command.add("-c");
-            command.add("2048");
+            command.add(String.valueOf(cfg.llmContextSize));
             command.add("--temp");
-            command.add("0.6");
+            command.add(String.valueOf(cfg.llmTemperature));
 
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.directory(llamaCli.getParent().toFile());
@@ -92,7 +94,7 @@ public class LlamaEngine implements LlmEngine {
                 }
             }, AiLibExecutors.PROCESS_IO_EXECUTOR);
 
-            boolean completed = process.waitFor(35, TimeUnit.SECONDS);
+            boolean completed = process.waitFor(cfg.llmTimeoutSeconds, TimeUnit.SECONDS);
             if (!completed) {
                 process.destroyForcibly();
                 throw new AiLibException(AiLibException.Reason.TIMEOUT, "Превышено время ожидания ответа LLM");
