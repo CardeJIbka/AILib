@@ -3,6 +3,7 @@ package com.cardejibka.ailib.engine;
 import com.cardejibka.ailib.AiLibExecutors;
 import com.cardejibka.ailib.api.AiLibException;
 import com.cardejibka.ailib.api.TtsEngine;
+import com.cardejibka.ailib.config.AiLibConfig;
 import com.cardejibka.ailib.downloader.NativeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -94,7 +95,7 @@ public class PiperEngine implements TtsEngine {
             }, "AiLib-TTS-stderr");
             errThread.start();
 
-            boolean finished = process.waitFor(15, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(AiLibConfig.get().ttsTimeoutSeconds, TimeUnit.SECONDS);
             errThread.join();
 
             if (!finished) {

@@ -1,5 +1,7 @@
 package com.cardejibka.ailib;
 
+import com.cardejibka.ailib.config.AiLibConfig;
+
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -14,7 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <ul>
  *   <li>{@link #DOWNLOAD_EXECUTOR} — параллельные скачивания (натив A, натив B,
  *       модель C — одновременно, но не бесконечным числом потоков, чтобы не забить
- *       канал и диск игрока).</li>
+ *       канал и диск игрока). Размер пула — из config/ailib.json (maxParallelDownloads).</li>
  *   <li>{@link #PROCESS_IO_EXECUTOR} — чтение stdout/stderr запущенных нативных
  *       процессов (лёгкая работа, отдельно от скачиваний).</li>
  * </ul>
@@ -24,11 +26,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public final class AiLibExecutors {
 
-    /** Сколько артефактов может качаться одновременно. Можно сделать конфигурируемым позже. */
-    private static final int MAX_PARALLEL_DOWNLOADS = 3;
-
     public static final ExecutorService DOWNLOAD_EXECUTOR =
-            Executors.newFixedThreadPool(MAX_PARALLEL_DOWNLOADS, namedThreadFactory("AiLib-Download"));
+            Executors.newFixedThreadPool(
+                    Math.max(1, AiLibConfig.get().maxParallelDownloads),
+                    namedThreadFactory("AiLib-Download"));
 
     public static final ExecutorService PROCESS_IO_EXECUTOR =
             Executors.newFixedThreadPool(4, namedThreadFactory("AiLib-ProcessIO"));

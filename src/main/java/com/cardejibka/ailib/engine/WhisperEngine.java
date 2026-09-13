@@ -3,6 +3,7 @@ package com.cardejibka.ailib.engine;
 import com.cardejibka.ailib.AiLibExecutors;
 import com.cardejibka.ailib.api.AiLibException;
 import com.cardejibka.ailib.api.SttEngine;
+import com.cardejibka.ailib.config.AiLibConfig;
 import com.cardejibka.ailib.downloader.NativeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -51,6 +52,7 @@ public class WhisperEngine implements SttEngine {
 
         Path workingDir = whisperCli.getParent();
         try {
+            AiLibConfig cfg = AiLibConfig.get();
             List<String> command = new ArrayList<>();
             command.add(whisperCli.toAbsolutePath().toString());
             command.add("-m");
@@ -58,9 +60,9 @@ public class WhisperEngine implements SttEngine {
             command.add("-f");
             command.add(relativeOrAbsolute(workingDir, wavAudioPath));
             command.add("-l");
-            command.add("auto");
+            command.add(cfg.sttLanguage);
             command.add("-t");
-            command.add("2");
+            command.add(String.valueOf(cfg.sttThreads));
             command.add("-nt");
 
             ProcessBuilder pb = new ProcessBuilder(command);
@@ -73,7 +75,7 @@ public class WhisperEngine implements SttEngine {
                 while ((line = reader.readLine()) != null) stdout.append(line).append(" ");
             }
 
-            boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+            boolean finished = process.waitFor(cfg.sttTimeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
                 throw new AiLibException(AiLibException.Reason.TIMEOUT, "Превышено время ожидания распознавания");
