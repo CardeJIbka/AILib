@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 public class WhisperEngine implements SttEngine {
@@ -22,14 +23,13 @@ public class WhisperEngine implements SttEngine {
 
     @Override
     public boolean isNativeReady() {
-        Path exe = resolveExecutable();
-        return exe != null && Files.exists(exe);
+        return NativeConfig.AiModule.STT.resolveExecutable() != null;
     }
 
     @Override
     public String transcribe(Path wavAudioPath, Path modelPath) {
-        Path whisperCli = resolveExecutable();
-        if (whisperCli == null || !Files.exists(whisperCli)) {
+        Path whisperCli = NativeConfig.AiModule.STT.resolveExecutable();
+        if (whisperCli == null) {
             throw new AiLibException(AiLibException.Reason.NOT_READY, "Бинарник whisper-cli не найден");
         }
         if (!Files.exists(wavAudioPath)) {
@@ -56,9 +56,9 @@ public class WhisperEngine implements SttEngine {
             List<String> command = new ArrayList<>();
             command.add(whisperCli.toAbsolutePath().toString());
             command.add("-m");
-            command.add(relativeOrAbsolute(workingDir, modelPath));
+            command.add(ProcessUtil.relativeOrAbsolute(workingDir, modelPath));
             command.add("-f");
-            command.add(relativeOrAbsolute(workingDir, wavAudioPath));
+            command.add(ProcessUtil.relativeOrAbsolute(workingDir, wavAudioPath));
             command.add("-l");
             command.add(cfg.sttLanguage);
             command.add("-t");
@@ -67,51 +67,45 @@ public class WhisperEngine implements SttEngine {
 
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.directory(workingDir.toFile());
+            // whisper-cli пишет много логов в stderr — без чтения/перенаправления pipe заполнится и процесс встанет.
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
             Process process = pb.start();
+            process.getOutputStream().close();
 
             StringBuilder stdout = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = reader.readLine()) != null) stdout.append(line).append(" ");
-            }
+            // Чтение stdout — асинхронно, иначе таймаут не сработает: основной поток завис бы в readLine().
+            CompletableFuture<Void> readTask = CompletableFuture.runAsync(() -> {
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) stdout.append(line).append(' ');
+                } catch (Exception e) {
+                    LOGGER.error("Ошибка чтения потока whisper-cli", e);
+                }
+            }, AiLibExecutors.PROCESS_IO_EXECUTOR);
 
             boolean finished = process.waitFor(cfg.sttTimeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
-                process.destroyForcibly();
+                ProcessUtil.killAndWait(process);
+                readTask.cancel(true);
                 throw new AiLibException(AiLibException.Reason.TIMEOUT, "Превышено время ожидания распознавания");
             }
+            readTask.join();
 
+            if (process.exitValue() != 0) {
+                throw new AiLibException(AiLibException.Reason.PROCESS_FAILED,
+                        "whisper-cli завершился с кодом " + process.exitValue());
+            }
             return stdout.toString().trim();
         } catch (AiLibException e) {
             throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Распознавание прервано");
         } catch (Exception e) {
             LOGGER.error("[STT Error]", e);
             throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Исключение STT: " + e.getMessage());
         } finally {
             AiLibExecutors.STT_SLOT.release();
-        }
-    }
-
-    private static Path resolveExecutable() {
-        Path dir = NativeConfig.AiModule.STT.getDir();
-        Path expected = dir.resolve(NativeConfig.AiModule.STT.getExpectedFile());
-        if (Files.exists(expected)) return expected;
-
-        Path fallback1 = dir.resolve("Release").resolve("whisper-cli.exe");
-        if (Files.exists(fallback1)) return fallback1;
-        Path fallback2 = dir.resolve("main.exe");
-        if (Files.exists(fallback2)) return fallback2;
-        Path fallback3 = dir.resolve("whisper-cli");
-        if (Files.exists(fallback3)) return fallback3;
-
-        return expected;
-    }
-
-    private static String relativeOrAbsolute(Path base, Path target) {
-        try {
-            return base.toAbsolutePath().relativize(target.toAbsolutePath()).toString();
-        } catch (IllegalArgumentException e) {
-            return target.toAbsolutePath().toString();
         }
     }
 }

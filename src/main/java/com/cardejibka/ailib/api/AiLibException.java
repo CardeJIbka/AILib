@@ -14,7 +14,9 @@ public class AiLibException extends RuntimeException {
         /** Вызов требует клиентское окружение (микрофон/динамики), а его нет. */
         CLIENT_ONLY,
         /** Слот занят другим запросом дольше, чем разрешено ждать. */
-        BUSY
+        BUSY,
+        /** Для этой ОС/архитектуры нет нативного бинарника. */
+        UNSUPPORTED_PLATFORM
     }
 
     private final Reason reason;

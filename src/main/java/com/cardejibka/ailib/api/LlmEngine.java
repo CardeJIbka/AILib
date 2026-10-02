@@ -3,16 +3,19 @@ package com.cardejibka.ailib.api;
 import java.nio.file.Path;
 
 /**
- * Реализуется движком (по умолчанию — LlamaEngine на llama.cpp). Другой мод может
- * подставить свою реализацию, если ему нужен другой рантайм (например, llama-server
- * вместо разового процесса llama-cli).
+ * Реализуется движком (по умолчанию — LlamaEngine на llama.cpp). Подменить можно
+ * через {@link AiLib#setLlmEngine(LlmEngine)}.
  */
 public interface LlmEngine {
     boolean isNativeReady();
 
     /**
-     * @param prompt    пользовательский промпт (обрамление системным промптом — забота реализации)
-     * @param modelPath путь к файлу весов на диске, уже гарантированно скачанному вызывающей стороной
+     * @param request   промпт и параметры; request.format() уже заполнен вызывающей стороной
+     * @param modelPath путь к файлу весов, уже гарантированно скачанному
      */
-    String generate(String prompt, Path modelPath);
+    String generate(LlmRequest request, Path modelPath);
+
+    default String generate(String prompt, Path modelPath) {
+        return generate(LlmRequest.of(prompt), modelPath);
+    }
 }

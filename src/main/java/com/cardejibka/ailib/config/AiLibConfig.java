@@ -9,15 +9,12 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * Настройки, которые раньше были захардкожены прямо в движках (системный промпт,
- * число потоков, таймауты) или нигде не существовали вообще (allow-list доменов
- * для скачивания моделей по чужой ссылке). Лежит в config/ailib.json — если файла
- * нет, создаётся с дефолтами при первом обращении.
- * <p>
- * Gson тут не новая зависимость — он уже транзитивно тянется вместе с Minecraft/Fabric,
- * так что подключать ничего дополнительно не нужно.
+ * Настройки в config/ailib.json. Если файла нет — создаётся с дефолтами.
+ * Если файл есть, но битый — он НЕ перезаписывается (правки пользователя не теряются),
+ * на время работы используются дефолты.
  */
 public final class AiLibConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger("AiLib-Config");
@@ -25,12 +22,20 @@ public final class AiLibConfig {
 
     private static volatile AiLibConfig instance;
 
+    // --- Общее ---
+    /** false = ничего не качать при старте, всё лениво при первом вызове API. */
+    public boolean bootstrapDefaults = true;
+    /** Уровень прав для команд /ailib (по умолчанию 2 = операторы). */
+    public int commandPermissionLevel = 2;
+
     // --- LLM ---
     public String llmSystemPrompt = "Ты полезный ассистент. Отвечай кратко и чётко.";
     public int llmMaxTokens = 128;
     public int llmContextSize = 2048;
     public double llmTemperature = 0.6;
     public int llmTimeoutSeconds = 35;
+    /** Доп. аргументы llama-cli, например ["-no-cnv"] для сборок, где по умолчанию включён диалоговый режим. */
+    public List<String> llmExtraArgs = List.of();
 
     // --- TTS ---
     public int ttsTimeoutSeconds = 15;
@@ -44,9 +49,8 @@ public final class AiLibConfig {
     public int maxParallelDownloads = 3;
     /**
      * Домены, с которых разрешено скачивать МОДЕЛИ, зарегистрированные сторонними
-     * модами через AiLib.registerModel(...). Проверяется по хосту URL (точное
-     * совпадение или поддомен). Встроенные нативы (llama.cpp/whisper.cpp/piper)
-     * этой проверке не подлежат — их ссылки фиксированы в самой библиотеке.
+     * модами. Проверяется по хосту исходного URL (точное совпадение или поддомен).
+     * Редиректы на CDN этой проверке не подлежат. Нативы — ссылки фиксированы в библиотеке.
      */
     public List<String> allowedModelDownloadDomains = List.of(
             "huggingface.co",
@@ -76,14 +80,16 @@ public final class AiLibConfig {
         Path path = configPath();
         if (Files.exists(path)) {
             try {
-                String json = Files.readString(path);
-                AiLibConfig loaded = GSON.fromJson(json, AiLibConfig.class);
+                AiLibConfig loaded = GSON.fromJson(Files.readString(path), AiLibConfig.class);
                 if (loaded != null) {
+                    loaded.sanitize();
                     return loaded;
                 }
             } catch (Exception e) {
-                LOGGER.error("Не удалось прочитать {}, использую значения по умолчанию: {}", path, e.getMessage());
+                LOGGER.error("Не удалось прочитать {} ({}). Файл НЕ перезаписан — исправь его вручную; "
+                        + "пока используются значения по умолчанию.", path, e.getMessage());
             }
+            return new AiLibConfig(); // файл существует, но непригоден: не трогаем его
         }
 
         AiLibConfig defaults = new AiLibConfig();
@@ -96,16 +102,35 @@ public final class AiLibConfig {
         return defaults;
     }
 
-    /** Сбросить кэш и перечитать файл с диска — полезно, если добавишь команду /ailib reload. */
+    /** Сбросить кэш и перечитать файл с диска. */
     public static synchronized void reload() {
         instance = load();
     }
 
+    /** Чинит null и неадекватные значения, пришедшие из ручной правки JSON. */
+    public void sanitize() {
+        AiLibConfig d = new AiLibConfig();
+        if (llmSystemPrompt == null) llmSystemPrompt = d.llmSystemPrompt;
+        if (sttLanguage == null || sttLanguage.isBlank()) sttLanguage = d.sttLanguage;
+        if (allowedModelDownloadDomains == null) allowedModelDownloadDomains = d.allowedModelDownloadDomains;
+        if (llmExtraArgs == null) llmExtraArgs = List.of();
+        llmMaxTokens = Math.max(1, llmMaxTokens);
+        llmContextSize = Math.max(128, llmContextSize);
+        if (Double.isNaN(llmTemperature) || llmTemperature < 0) llmTemperature = d.llmTemperature;
+        llmTimeoutSeconds = Math.max(1, llmTimeoutSeconds);
+        ttsTimeoutSeconds = Math.max(1, ttsTimeoutSeconds);
+        sttThreads = Math.max(1, sttThreads);
+        sttTimeoutSeconds = Math.max(1, sttTimeoutSeconds);
+        maxParallelDownloads = Math.max(1, maxParallelDownloads);
+        commandPermissionLevel = Math.max(0, Math.min(4, commandPermissionLevel));
+    }
+
     public boolean isDomainAllowed(String host) {
-        if (host == null) return false;
-        String lowerHost = host.toLowerCase(java.util.Locale.ROOT);
+        if (host == null || allowedModelDownloadDomains == null) return false;
+        String lowerHost = host.toLowerCase(Locale.ROOT);
         for (String domain : allowedModelDownloadDomains) {
-            String lowerDomain = domain.toLowerCase(java.util.Locale.ROOT);
+            if (domain == null) continue;
+            String lowerDomain = domain.toLowerCase(Locale.ROOT);
             if (lowerHost.equals(lowerDomain) || lowerHost.endsWith("." + lowerDomain)) {
                 return true;
             }

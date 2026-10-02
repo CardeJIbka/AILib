@@ -3,6 +3,8 @@ package com.cardejibka.ailib.engine;
 import com.cardejibka.ailib.AiLibExecutors;
 import com.cardejibka.ailib.api.AiLibException;
 import com.cardejibka.ailib.api.LlmEngine;
+import com.cardejibka.ailib.api.LlmRequest;
+import com.cardejibka.ailib.api.PromptFormat;
 import com.cardejibka.ailib.config.AiLibConfig;
 import com.cardejibka.ailib.downloader.NativeConfig;
 import org.slf4j.Logger;
@@ -24,16 +26,13 @@ public class LlamaEngine implements LlmEngine {
 
     @Override
     public boolean isNativeReady() {
-        Path llamaDir = NativeConfig.AiModule.LLM.getDir();
-        return Files.exists(llamaDir.resolve(NativeConfig.AiModule.LLM.getExpectedFile()));
+        return NativeConfig.AiModule.LLM.resolveExecutable() != null;
     }
 
     @Override
-    public String generate(String prompt, Path modelPath) {
-        Path llamaDir = NativeConfig.AiModule.LLM.getDir();
-        Path llamaCli = llamaDir.resolve(NativeConfig.AiModule.LLM.getExpectedFile());
-
-        if (!Files.exists(llamaCli) || !Files.exists(modelPath)) {
+    public String generate(LlmRequest request, Path modelPath) {
+        Path llamaCli = NativeConfig.AiModule.LLM.resolveExecutable();
+        if (llamaCli == null || !Files.exists(modelPath)) {
             throw new AiLibException(AiLibException.Reason.NOT_READY, "Бинарник или модель Llama не найдены");
         }
 
@@ -49,30 +48,32 @@ public class LlamaEngine implements LlmEngine {
         }
 
         try {
-            LOGGER.info("[LLM] Генерация ответа на промпт: \"{}\"", prompt);
             AiLibConfig cfg = AiLibConfig.get();
+            String system = request.systemPrompt() != null ? request.systemPrompt() : cfg.llmSystemPrompt;
+            int maxTokens = request.maxTokens() != null ? request.maxTokens() : cfg.llmMaxTokens;
+            double temperature = request.temperature() != null ? request.temperature() : cfg.llmTemperature;
+            PromptFormat format = request.format() != null ? request.format() : PromptFormat.LLAMA3;
 
-            String fullPrompt = "<|start_header_id|>system<|end_header_id|>\n" +
-                    cfg.llmSystemPrompt + "<|eot_id|>\n" +
-                    "<|start_header_id|>user<|end_header_id|>\n" +
-                    prompt +
-                    "<|eot_id|>\n" +
-                    "<|start_header_id|>assistant<|end_header_id|>\n" +
-                    RESPONSE_MARKER;
+            LOGGER.debug("[LLM] Генерация ответа ({} симв. промпта, формат {})", request.prompt().length(), format);
+
+            // Убираем маркер из пользовательского текста, чтобы он не мог подменить границу ответа.
+            String userPrompt = request.prompt().replace(RESPONSE_MARKER, "");
+            String fullPrompt = format.build(system, userPrompt) + RESPONSE_MARKER;
 
             List<String> command = new ArrayList<>();
             command.add(llamaCli.toAbsolutePath().toString());
             command.add("-m");
-            command.add(relativeOrAbsolute(llamaCli.getParent(), modelPath));
+            command.add(ProcessUtil.relativeOrAbsolute(llamaCli.getParent(), modelPath));
             command.add("--log-disable");
             command.add("-p");
             command.add(fullPrompt);
             command.add("-n");
-            command.add(String.valueOf(cfg.llmMaxTokens));
+            command.add(String.valueOf(maxTokens));
             command.add("-c");
             command.add(String.valueOf(cfg.llmContextSize));
             command.add("--temp");
-            command.add(String.valueOf(cfg.llmTemperature));
+            command.add(String.valueOf(temperature));
+            command.addAll(cfg.llmExtraArgs);
 
             ProcessBuilder pb = new ProcessBuilder(command);
             pb.directory(llamaCli.getParent().toFile());
@@ -96,7 +97,8 @@ public class LlamaEngine implements LlmEngine {
 
             boolean completed = process.waitFor(cfg.llmTimeoutSeconds, TimeUnit.SECONDS);
             if (!completed) {
-                process.destroyForcibly();
+                ProcessUtil.killAndWait(process);
+                readTask.cancel(true);
                 throw new AiLibException(AiLibException.Reason.TIMEOUT, "Превышено время ожидания ответа LLM");
             }
 
@@ -109,6 +111,9 @@ public class LlamaEngine implements LlmEngine {
 
         } catch (AiLibException e) {
             throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Генерация прервана");
         } catch (Exception e) {
             LOGGER.error("[LLM Exception]", e);
             throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Исключение LLM: " + e.getMessage());
@@ -117,23 +122,17 @@ public class LlamaEngine implements LlmEngine {
         }
     }
 
-    private static String relativeOrAbsolute(Path base, Path target) {
-        try {
-            return base.toAbsolutePath().relativize(target.toAbsolutePath()).toString();
-        } catch (IllegalArgumentException e) {
-            return target.toAbsolutePath().toString();
+    static String extractAnswer(String rawOutput) {
+        String clean = rawOutput.replaceAll("\u001B\\[[;\\d]*[ -/]*[@-~]", "").replace("\r", "");
+        int markerIdx = clean.lastIndexOf(RESPONSE_MARKER);
+        if (markerIdx < 0) return clean.trim();
+
+        String answer = clean.substring(markerIdx + RESPONSE_MARKER.length());
+        int cut = answer.length();
+        for (String stop : PromptFormat.STOP_MARKERS) {
+            int idx = answer.indexOf(stop);
+            if (idx >= 0 && idx < cut) cut = idx;
         }
-    }
-
-    private static String extractAnswer(String rawOutput) {
-        String clean = rawOutput.replaceAll("\u001B\\[[;\\d]*[ -/]*[@-~]", "");
-        if (!clean.contains(RESPONSE_MARKER)) return clean.trim();
-
-        String answerPart = clean.substring(clean.indexOf(RESPONSE_MARKER) + RESPONSE_MARKER.length());
-        if (answerPart.contains("<|eot_id|>")) answerPart = answerPart.substring(0, answerPart.indexOf("<|eot_id|>"));
-        if (answerPart.contains("<|im_end|>")) answerPart = answerPart.substring(0, answerPart.indexOf("<|im_end|>"));
-        if (answerPart.contains("[ Prompt:")) answerPart = answerPart.substring(0, answerPart.indexOf("[ Prompt:"));
-
-        return answerPart.replaceAll("\r", "").trim().replaceAll("^#+|#+$", "").trim();
+        return answer.substring(0, cut).trim();
     }
 }

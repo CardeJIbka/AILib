@@ -1,32 +1,33 @@
 package com.cardejibka.ailib.api;
 
+import com.cardejibka.ailib.AiLibExecutors;
+import com.cardejibka.ailib.config.AiLibConfig;
 import com.cardejibka.ailib.downloader.AiLibBootstrap;
 import com.cardejibka.ailib.downloader.NativeConfig;
 import com.cardejibka.ailib.downloader.ProgressBus;
+import com.cardejibka.ailib.downloader.ProgressSink;
 import com.cardejibka.ailib.engine.LlamaEngine;
 import com.cardejibka.ailib.engine.PiperEngine;
 import com.cardejibka.ailib.engine.WhisperEngine;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Публичный вход в библиотеку для сторонних модов. Пример использования из
- * другого мода:
+ * Публичный вход в библиотеку для сторонних модов.
  * <pre>{@code
- * // Вариант 1 — модель по умолчанию (Llama-3.2-1B), ничего регистрировать не нужно:
+ * // Модель по умолчанию — ничего регистрировать не нужно (скачается при первом вызове):
  * String answer = AiLib.generate("Привет!");
  *
- * // Вариант 2 — своя модель:
- * ModelSpec myModel = new ModelSpec("mymod:mistral-7b", EngineType.LLM,
- *         "mistral-7b-q4.gguf", "https://huggingface.co/.../mistral-7b-q4.gguf",
- *         "abcd1234...sha256...");
- * AiLib.registerModel(myModel);
- * String answer = AiLib.generate("Привет!", myModel);
+ * // Своя модель с другим шаблоном чата:
+ * ModelSpec qwen = new ModelSpec("mymod:qwen", EngineType.LLM, "qwen2.5-1.5b-q4.gguf",
+ *         "https://huggingface.co/.../qwen2.5-1.5b-q4.gguf").withPromptFormat(PromptFormat.CHATML);
+ * ModelHandle handle = AiLib.register(qwen);   // не бросает; смотри handle.state()/failureReason()
+ * String answer = AiLib.generate(LlmRequest.builder("Привет!").systemPrompt("Ты стражник").build(), qwen);
  * }</pre>
- * Все методы генерации — синхронные (блокируют вызывающий поток на время работы
- * нативного процесса), поэтому вызывай их из фонового потока, а не из главного
- * потока клиента/сервера — так же, как это делает {@code AiLibMain} в своих командах.
+ * Синхронные методы блокируют поток на время работы нативного процесса — вызывай их из
+ * фонового потока или используй {@code *Async}-варианты.
  */
 public final class AiLib {
 
@@ -35,47 +36,70 @@ public final class AiLib {
             "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
             "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf");
 
+    /** Голос Piper: .onnx + .onnx.json как companion — модель готова, только когда есть оба файла. */
     public static final ModelSpec DEFAULT_TTS_VOICE = new ModelSpec(
             "ailib:piper-ru-dmitri-medium", EngineType.TTS,
             "ru_RU-dmitri-medium.onnx",
-            "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx");
-    // Конфиг голоса качается отдельным файлом рядом (см. registerModel ниже) —
-    // Piper ожидает <fileName>.json рядом с .onnx.
-    public static final ModelSpec DEFAULT_TTS_VOICE_CONFIG = new ModelSpec(
-            "ailib:piper-ru-dmitri-medium-config", EngineType.TTS,
-            "ru_RU-dmitri-medium.onnx.json",
-            "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx.json");
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx")
+            .withCompanions(new ModelFile("ru_RU-dmitri-medium.onnx.json",
+                    "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx.json"));
 
     public static final ModelSpec DEFAULT_STT_MODEL = new ModelSpec(
             "ailib:whisper-tiny", EngineType.STT,
             "ggml-tiny.bin",
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin");
 
-    private static final LlmEngine LLM_ENGINE = new LlamaEngine();
-    private static final TtsEngine TTS_ENGINE = new PiperEngine();
-    private static final SttEngine STT_ENGINE = new WhisperEngine();
+    private static volatile LlmEngine llmEngine = new LlamaEngine();
+    private static volatile TtsEngine ttsEngine = new PiperEngine();
+    private static volatile SttEngine sttEngine = new WhisperEngine();
 
     private AiLib() {
     }
 
-    /** Вызывается один раз из AiLibMain.onInitialize() — качает натив + модели по умолчанию в фоне. */
+    // ---------- Подмена движков ----------
+
+    public static void setLlmEngine(LlmEngine engine) { llmEngine = java.util.Objects.requireNonNull(engine); }
+    public static void setTtsEngine(TtsEngine engine) { ttsEngine = java.util.Objects.requireNonNull(engine); }
+    public static void setSttEngine(SttEngine engine) { sttEngine = java.util.Objects.requireNonNull(engine); }
+
+    // ---------- Загрузки и управление моделями ----------
+
+    /**
+     * Вызывается из AiLibMain.onInitialize(). Если в конфиге bootstrapDefaults=false —
+     * ничего не качает: всё подтянется лениво при первом вызове generate/synthesize/transcribe.
+     */
     public static void bootstrapDefaults() {
+        if (!AiLibConfig.get().bootstrapDefaults) return;
         AiLibBootstrap.ensureNativeReady(NativeConfig.AiModule.LLM);
         AiLibBootstrap.ensureNativeReady(NativeConfig.AiModule.TTS);
         AiLibBootstrap.ensureNativeReady(NativeConfig.AiModule.STT);
-        registerModel(DEFAULT_LLM_MODEL);
-        registerModel(DEFAULT_TTS_VOICE);
-        registerModel(DEFAULT_TTS_VOICE_CONFIG);
-        registerModel(DEFAULT_STT_MODEL);
+        register(DEFAULT_LLM_MODEL);
+        register(DEFAULT_TTS_VOICE);
+        register(DEFAULT_STT_MODEL);
     }
 
     /**
-     * Регистрирует модель и запускает её фоновую загрузку параллельно со всем
-     * остальным. Можно вызывать из любого мода в любой момент — повторная
-     * регистрация с тем же {@code spec.id()} безопасна (не плодит новых загрузок).
+     * Регистрирует модель и запускает фоновую загрузку. Идемпотентно по {@code spec.id()};
+     * повторный вызов для упавшей модели запускает новую попытку. Не бросает исключений —
+     * проблемы приходят как {@link ModelHandle.State#FAILED} с причиной.
      */
+    public static ModelHandle register(ModelSpec spec) {
+        return AiLibBootstrap.register(spec);
+    }
+
+    /** Совместимость: то же, что register(spec).future(). Больше не бросает исключений. */
     public static CompletableFuture<Boolean> registerModel(ModelSpec spec) {
-        return AiLibBootstrap.ensureModelReady(spec);
+        return register(spec).future();
+    }
+
+    /** Хэндл зарегистрированной модели или null. */
+    public static ModelHandle getModel(String id) {
+        return AiLibBootstrap.getModel(id);
+    }
+
+    /** Все зарегистрированные модели. */
+    public static List<ModelHandle> models() {
+        return AiLibBootstrap.getModels();
     }
 
     public static boolean isModelReady(ModelSpec spec) {
@@ -86,16 +110,41 @@ public final class AiLib {
         return AiLibBootstrap.isNativeReady(toModule(engine));
     }
 
+    /** Подписка на прогресс всех загрузок (нативы и модели) — для собственного HUD/логов. */
+    public static void subscribeProgress(ProgressSink sink) {
+        ProgressBus.subscribe(sink);
+    }
+
+    public static void unsubscribeProgress(ProgressSink sink) {
+        ProgressBus.unsubscribe(sink);
+    }
+
     // ---------- LLM ----------
 
     public static String generate(String prompt) {
-        return generate(prompt, DEFAULT_LLM_MODEL);
+        return generate(LlmRequest.of(prompt), DEFAULT_LLM_MODEL);
     }
 
     public static String generate(String prompt, ModelSpec model) {
-        requireReady(NativeConfig.AiModule.LLM, model);
+        return generate(LlmRequest.of(prompt), model);
+    }
+
+    public static String generate(LlmRequest request) {
+        return generate(request, DEFAULT_LLM_MODEL);
+    }
+
+    public static String generate(LlmRequest request, ModelSpec model) {
+        requireReady(NativeConfig.AiModule.LLM, model, EngineType.LLM);
         Path modelPath = NativeConfig.getModelsDir().resolve(model.fileName());
-        return LLM_ENGINE.generate(prompt, modelPath);
+        return llmEngine.generate(request.withFormatIfAbsent(model.promptFormat()), modelPath);
+    }
+
+    public static CompletableFuture<String> generateAsync(String prompt) {
+        return CompletableFuture.supplyAsync(() -> generate(prompt), AiLibExecutors.CALL_EXECUTOR);
+    }
+
+    public static CompletableFuture<String> generateAsync(LlmRequest request, ModelSpec model) {
+        return CompletableFuture.supplyAsync(() -> generate(request, model), AiLibExecutors.CALL_EXECUTOR);
     }
 
     // ---------- TTS ----------
@@ -105,9 +154,17 @@ public final class AiLib {
     }
 
     public static byte[] synthesize(String text, ModelSpec voice) {
-        requireReady(NativeConfig.AiModule.TTS, voice);
+        requireReady(NativeConfig.AiModule.TTS, voice, EngineType.TTS);
         Path voicePath = NativeConfig.getModelsDir().resolve(voice.fileName());
-        return TTS_ENGINE.synthesize(text, voicePath);
+        return ttsEngine.synthesize(text, voicePath);
+    }
+
+    public static CompletableFuture<byte[]> synthesizeAsync(String text) {
+        return CompletableFuture.supplyAsync(() -> synthesize(text), AiLibExecutors.CALL_EXECUTOR);
+    }
+
+    public static CompletableFuture<byte[]> synthesizeAsync(String text, ModelSpec voice) {
+        return CompletableFuture.supplyAsync(() -> synthesize(text, voice), AiLibExecutors.CALL_EXECUTOR);
     }
 
     // ---------- STT ----------
@@ -117,22 +174,55 @@ public final class AiLib {
     }
 
     public static String transcribe(Path wavAudioPath, ModelSpec model) {
-        requireReady(NativeConfig.AiModule.STT, model);
+        requireReady(NativeConfig.AiModule.STT, model, EngineType.STT);
         Path modelPath = NativeConfig.getModelsDir().resolve(model.fileName());
-        return STT_ENGINE.transcribe(wavAudioPath, modelPath);
+        return sttEngine.transcribe(wavAudioPath, modelPath);
+    }
+
+    public static CompletableFuture<String> transcribeAsync(Path wavAudioPath) {
+        return CompletableFuture.supplyAsync(() -> transcribe(wavAudioPath), AiLibExecutors.CALL_EXECUTOR);
+    }
+
+    public static CompletableFuture<String> transcribeAsync(Path wavAudioPath, ModelSpec model) {
+        return CompletableFuture.supplyAsync(() -> transcribe(wavAudioPath, model), AiLibExecutors.CALL_EXECUTOR);
     }
 
     // ---------- служебное ----------
 
-    private static void requireReady(NativeConfig.AiModule module, ModelSpec spec) {
-        boolean nativeReady = AiLibBootstrap.isNativeReady(module);
-        boolean modelReady = AiLibBootstrap.isModelReady(spec);
-        if (nativeReady && modelReady) return;
+    private static void requireReady(NativeConfig.AiModule module, ModelSpec spec, EngineType expected) {
+        if (spec.engine() != expected) {
+            throw new IllegalArgumentException("Модель '" + spec.id() + "' имеет тип " + spec.engine()
+                    + ", а для этого вызова нужен " + expected);
+        }
+        try {
+            module.getBinary();
+        } catch (UnsupportedOperationException e) {
+            throw new AiLibException(AiLibException.Reason.UNSUPPORTED_PLATFORM, e.getMessage());
+        }
 
-        String taskId = !modelReady ? "model:" + spec.id() : "native:" + module.getId();
+        boolean nativeReady = AiLibBootstrap.isNativeReady(module);
+        if (!nativeReady) {
+            AiLibBootstrap.ensureNativeReady(module); // идемпотентно, с кулдауном после сбоя
+            if (AiLibBootstrap.hasNativeFailed(module)) {
+                throw new AiLibException(AiLibException.Reason.DOWNLOAD_FAILED,
+                        "Не удалось скачать натив '" + module.getId() + "' (повтор через минуту, подробности в логе)");
+            }
+        }
+
+        // Модель, про которую ещё не знали, регистрируется автоматически.
+        ModelHandle handle = AiLibBootstrap.getModel(spec.id());
+        if (handle == null) handle = AiLibBootstrap.register(spec);
+
+        if (handle.state() == ModelHandle.State.FAILED) {
+            throw new AiLibException(AiLibException.Reason.DOWNLOAD_FAILED,
+                    "Модель '" + spec.id() + "' не загружена (" + handle.failureReason() + "): " + handle.failureMessage());
+        }
+        if (nativeReady && handle.isReady()) return;
+
+        String taskId = !handle.isReady() ? "model:" + spec.id() : "native:" + module.getId();
         int percent = ProgressBus.getLastPercent(taskId);
         throw new AiLibException(AiLibException.Reason.NOT_READY,
-                "Компонент ещё не готов: " + (!modelReady ? spec.fileName() : module.getId()), percent);
+                "Компонент ещё не готов: " + (!handle.isReady() ? spec.fileName() : module.getId()), percent);
     }
 
     private static NativeConfig.AiModule toModule(EngineType engine) {

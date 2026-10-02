@@ -1,8 +1,5 @@
 package com.cardejibka.ailib.downloader;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
@@ -18,11 +15,16 @@ import java.time.Duration;
 import java.util.HexFormat;
 
 /**
- * Один генерик-метод для скачивания и natives-архивов, и файлов моделей —
- * раньше эта логика была продублирована в NativeDownloader и ModelDownloader.
+ * Один генерик-метод для скачивания и natives-архивов, и файлов моделей.
+ * Качает во временный "<target>.part", проверяет размер и sha256 (если передан),
+ * и только потом атомарно переименовывает — обрыв никогда не оставляет битый
+ * файл под финальным именем.
+ * <p>
+ * Только https. Редиректы разрешены, кроме downgrade https -> http. Домен редиректа
+ * НЕ сверяется с allow-list намеренно: HuggingFace/GitHub отдают файлы с CDN-доменов
+ * вроде cas-bridge.xethub.hf.co, а доверие к ним наследуется от исходного (проверенного) хоста.
  */
 public final class FileDownloader {
-    private static final Logger LOGGER = LoggerFactory.getLogger("AiLib-Download");
 
     @FunctionalInterface
     public interface ProgressCallback {
@@ -32,82 +34,85 @@ public final class FileDownloader {
     private FileDownloader() {
     }
 
-    /**
-     * Качает файл во временный "<target>.part", проверяет размер (и sha256, если передан),
-     * и только потом атомарно переименовывает в целевой путь — обрыв соединения никогда
-     * не оставляет "готовый", но битый файл под финальным именем.
-     */
-    public static boolean download(String url, Path targetPath, String expectedSha256Hex, ProgressCallback progress) {
+    public static void download(String url, Path targetPath, String expectedSha256Hex, ProgressCallback progress)
+            throws DownloadException {
         Path tmpPath = targetPath.resolveSibling(targetPath.getFileName() + ".part");
         try {
+            URI uri = URI.create(url);
+            if (!"https".equalsIgnoreCase(uri.getScheme())) {
+                throw new DownloadException(DownloadException.Kind.NETWORK, "Разрешён только https: " + url);
+            }
             Files.createDirectories(targetPath.getParent());
 
-            HttpClient client = HttpClient.newBuilder()
-                    .followRedirects(HttpClient.Redirect.ALWAYS)
+            try (HttpClient client = HttpClient.newBuilder()
+                    .followRedirects(HttpClient.Redirect.NORMAL)
                     .connectTimeout(Duration.ofSeconds(30))
-                    .build();
+                    .build()) {
 
-            long total = -1;
-            try {
-                HttpRequest head = HttpRequest.newBuilder().uri(URI.create(url))
-                        .method("HEAD", HttpRequest.BodyPublishers.noBody()).build();
-                HttpResponse<Void> headResponse = client.send(head, HttpResponse.BodyHandlers.discarding());
-                total = headResponse.headers().firstValueAsLong("Content-Length").orElse(-1);
-            } catch (Exception ignored) {
-                // Не все сервера отвечают на HEAD — просто не покажем total.
-            }
+                HttpRequest request = HttpRequest.newBuilder().uri(uri)
+                        .timeout(Duration.ofMinutes(20))
+                        .GET().build();
+                HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
-            HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url))
-                    .timeout(Duration.ofMinutes(20))
-                    .GET().build();
-            HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-
-            if (response.statusCode() != 200) {
-                LOGGER.error("HTTP {} при скачивании {}", response.statusCode(), url);
-                return false;
-            }
-
-            MessageDigest digest = expectedSha256Hex != null ? MessageDigest.getInstance("SHA-256") : null;
-            long finalTotal = total;
-            long downloadedTotal = 0;
-
-            try (InputStream in = response.body();
-                 OutputStream out = Files.newOutputStream(tmpPath, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-                byte[] buffer = new byte[256 * 1024];
-                int read;
-                while ((read = in.read(buffer)) != -1) {
-                    out.write(buffer, 0, read);
-                    if (digest != null) digest.update(buffer, 0, read);
-                    downloadedTotal += read;
-                    if (progress != null) progress.update(downloadedTotal, finalTotal);
+                if (response.statusCode() != 200) {
+                    try (InputStream ignored = response.body()) {
+                        // закрываем тело, чтобы освободить соединение
+                    }
+                    throw new DownloadException(DownloadException.Kind.HTTP_ERROR,
+                            "HTTP " + response.statusCode() + " при скачивании " + url);
                 }
-            }
 
-            if (finalTotal > 0 && downloadedTotal != finalTotal) {
-                LOGGER.error("Файл {} скачан не полностью: {} из {} байт", targetPath.getFileName(), downloadedTotal, finalTotal);
-                Files.deleteIfExists(tmpPath);
-                return false;
-            }
+                long total = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+                MessageDigest digest = expectedSha256Hex != null ? MessageDigest.getInstance("SHA-256") : null;
+                long downloaded = 0;
 
-            if (digest != null) {
-                String actualHex = HexFormat.of().formatHex(digest.digest());
-                if (!actualHex.equalsIgnoreCase(expectedSha256Hex)) {
-                    LOGGER.error("Несовпадение sha256 для {}: ожидалось {}, получено {}",
-                            targetPath.getFileName(), expectedSha256Hex, actualHex);
-                    Files.deleteIfExists(tmpPath);
-                    return false;
+                try (InputStream in = response.body();
+                     OutputStream out = Files.newOutputStream(tmpPath,
+                             StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    byte[] buffer = new byte[256 * 1024];
+                    int read;
+                    while ((read = in.read(buffer)) != -1) {
+                        out.write(buffer, 0, read);
+                        if (digest != null) digest.update(buffer, 0, read);
+                        downloaded += read;
+                        if (progress != null) progress.update(downloaded, total);
+                    }
                 }
-            }
 
-            Files.move(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
-            return true;
+                if (total > 0 && downloaded != total) {
+                    throw new DownloadException(DownloadException.Kind.INCOMPLETE,
+                            "Файл " + targetPath.getFileName() + " скачан не полностью: " + downloaded + " из " + total + " байт");
+                }
+
+                if (digest != null) {
+                    String actualHex = HexFormat.of().formatHex(digest.digest());
+                    if (!actualHex.equalsIgnoreCase(expectedSha256Hex)) {
+                        throw new DownloadException(DownloadException.Kind.HASH_MISMATCH,
+                                "Несовпадение sha256 для " + targetPath.getFileName()
+                                        + ": ожидалось " + expectedSha256Hex + ", получено " + actualHex);
+                    }
+                }
+
+                Files.move(tmpPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (DownloadException e) {
+            cleanup(tmpPath);
+            throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            cleanup(tmpPath);
+            throw new DownloadException(DownloadException.Kind.NETWORK, "Загрузка прервана: " + url, e);
         } catch (Exception e) {
-            LOGGER.error("Ошибка при скачивании {}: {}", url, e.getMessage());
-            try {
-                Files.deleteIfExists(tmpPath);
-            } catch (Exception ignored) {
-            }
-            return false;
+            cleanup(tmpPath);
+            throw new DownloadException(DownloadException.Kind.NETWORK,
+                    "Ошибка при скачивании " + url + ": " + e.getMessage(), e);
+        }
+    }
+
+    private static void cleanup(Path tmp) {
+        try {
+            Files.deleteIfExists(tmp);
+        } catch (Exception ignored) {
         }
     }
 }
