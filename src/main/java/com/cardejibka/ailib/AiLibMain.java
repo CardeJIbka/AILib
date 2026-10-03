@@ -35,8 +35,8 @@ public class AiLibMain implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        LOGGER.info("Инициализация AiLib...");
-        // Конфиг первым делом — до того, как executor'ы/движки запросят значения.
+        LOGGER.info("Initializing AiLib...");
+        // Load the config first, before executors/engines ask for values.
         AiLibConfig.get();
         AiLib.bootstrapDefaults();
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> registerCommands(dispatcher));
@@ -47,17 +47,17 @@ public class AiLibMain implements ModInitializer {
         try {
             Files.createDirectories(dir);
         } catch (Exception e) {
-            LOGGER.error("[AiLib] Не удалось создать временную папку {}", dir, e);
+            LOGGER.error("[AiLib] Could not create the temp directory {}", dir, e);
         }
         return dir;
     }
 
-    /** Уровень прав берётся из config/ailib.json (commandPermissionLevel, по умолчанию 2 = оператор). */
+    /** The permission level comes from config/ailib.json (commandPermissionLevel, default 2 = operator). */
     private static boolean hasAccess(CommandSourceStack source) {
         return source.hasPermission(AiLibConfig.get().commandPermissionLevel);
     }
 
-    /** Отправка сообщения из фонового потока — через главный поток сервера. */
+    /** Sends a message from a background thread by hopping onto the server thread. */
     private static void reply(CommandSourceStack source, String text, boolean failure) {
         Runnable send = () -> {
             if (failure) source.sendFailure(Component.literal(text));
@@ -76,21 +76,21 @@ public class AiLibMain implements ModInitializer {
                 } catch (AiLibException e) {
                     reply(source, "§c[" + tag + "]: " + describe(e), true);
                 } catch (Exception e) {
-                    LOGGER.error("[AiLib] Ошибка в команде {}", tag, e);
+                    LOGGER.error("[AiLib] Error in command {}", tag, e);
                     reply(source, "§c[" + tag + "]: " + e.getMessage(), true);
                 }
             });
         } catch (RejectedExecutionException e) {
-            reply(source, "§c[" + tag + "]: слишком много запросов, попробуйте позже", true);
+            reply(source, "§c[" + tag + "]: too many requests, try again later", true);
         }
     }
 
-    /** Файлы для STT разрешены только внутри папки игры — иначе оператор читает любой файл сервера. */
+    /** STT files are only allowed inside the game directory; otherwise an operator could read any file on the server. */
     private static Path resolveSttPath(String raw) {
         Path gameDir = FabricLoader.getInstance().getGameDir().toAbsolutePath().normalize();
         Path resolved = gameDir.resolve(raw).normalize();
         if (!resolved.startsWith(gameDir)) {
-            throw new IllegalArgumentException("Путь должен находиться внутри папки игры");
+            throw new IllegalArgumentException("The path must be inside the game directory");
         }
         return resolved;
     }
@@ -105,9 +105,9 @@ public class AiLibMain implements ModInitializer {
                                 .executes(context -> {
                                     CommandSourceStack source = context.getSource();
                                     String prompt = StringArgumentType.getString(context, "prompt");
-                                    reply(source, "§7[LLM] Генерация ответа...", false);
+                                    reply(source, "§7[LLM] Generating a reply...", false);
                                     runAsync(source, "LLM", () ->
-                                            reply(source, "§a[LLM Ответ]: §f" + AiLib.generate(prompt), false));
+                                            reply(source, "§a[LLM reply]: §f" + AiLib.generate(prompt), false));
                                     return 1;
                                 })))
                 .then(Commands.literal("tts")
@@ -115,14 +115,14 @@ public class AiLibMain implements ModInitializer {
                                 .executes(context -> {
                                     CommandSourceStack source = context.getSource();
                                     String text = StringArgumentType.getString(context, "text");
-                                    reply(source, "§7[TTS] Синтез речи...", false);
+                                    reply(source, "§7[TTS] Synthesizing speech...", false);
                                     runAsync(source, "TTS", () -> {
                                         byte[] wavData = AiLib.synthesize(text);
                                         Path outputPath = getTempDir().resolve("output.wav");
                                         boolean played = AudioHelper.playAndSave(wavData, outputPath);
-                                        String suffix = played ? "и воспроизводится." : "(воспроизведение недоступно на этой стороне).";
-                                        reply(source, "§a[TTS]: §fСинтезировано " + wavData.length
-                                                + " байт, сохранено в " + outputPath + " " + suffix, false);
+                                        String suffix = played ? "and is playing." : "(playback is not available on this side).";
+                                        reply(source, "§a[TTS]: §fSynthesized " + wavData.length
+                                                + " bytes, saved to " + outputPath + " " + suffix, false);
                                     });
                                     return 1;
                                 })))
@@ -131,10 +131,10 @@ public class AiLibMain implements ModInitializer {
                                 .executes(context -> {
                                     CommandSourceStack source = context.getSource();
                                     String filePathStr = StringArgumentType.getString(context, "filePath");
-                                    reply(source, "§7[STT] Распознавание файла...", false);
+                                    reply(source, "§7[STT] Transcribing the file...", false);
                                     runAsync(source, "STT", () -> {
                                         String text = AiLib.transcribe(resolveSttPath(filePathStr));
-                                        reply(source, "§a[STT Текст]: §f" + text, false);
+                                        reply(source, "§a[STT text]: §f" + text, false);
                                     });
                                     return 1;
                                 })))
@@ -143,7 +143,7 @@ public class AiLibMain implements ModInitializer {
                             CommandSourceStack source = context.getSource();
                             var models = AiLib.models();
                             if (models.isEmpty()) {
-                                reply(source, "§7[Models] Нет зарегистрированных моделей", false);
+                                reply(source, "§7[Models] No models registered", false);
                             }
                             for (var m : models) {
                                 String extra = m.state() == com.cardejibka.ailib.api.ModelHandle.State.FAILED
@@ -154,7 +154,7 @@ public class AiLibMain implements ModInitializer {
                             return 1;
                         }));
 
-        // record/ask используют микрофон и воспроизведение — чисто клиентские операции.
+        // record/ask use the microphone and playback, which are client-only operations.
         if (isClient) {
             ailibRoot
                     .then(Commands.literal("record")
@@ -162,12 +162,12 @@ public class AiLibMain implements ModInitializer {
                                     .executes(context -> {
                                         CommandSourceStack source = context.getSource();
                                         int seconds = IntegerArgumentType.getInteger(context, "seconds");
-                                        reply(source, "§7[Микрофон] Запись " + seconds + " сек...", false);
-                                        runAsync(source, "Микрофон", () -> {
+                                        reply(source, "§7[Microphone] Recording " + seconds + " s...", false);
+                                        runAsync(source, "Microphone", () -> {
                                             Path micPath = getTempDir().resolve("mic_input.wav");
                                             AudioHelper.recordMic(micPath, seconds);
-                                            reply(source, "§7[Микрофон] Распознавание...", false);
-                                            reply(source, "§a[Вы сказали]: §f" + AiLib.transcribe(micPath), false);
+                                            reply(source, "§7[Microphone] Transcribing...", false);
+                                            reply(source, "§a[You said]: §f" + AiLib.transcribe(micPath), false);
                                         });
                                         return 1;
                                     })))
@@ -176,18 +176,18 @@ public class AiLibMain implements ModInitializer {
                                     .executes(context -> {
                                         CommandSourceStack source = context.getSource();
                                         int seconds = IntegerArgumentType.getInteger(context, "seconds");
-                                        reply(source, "§7[Ask] Запись " + seconds + " сек...", false);
+                                        reply(source, "§7[Ask] Recording " + seconds + " s...", false);
                                         runAsync(source, "Ask", () -> {
                                             Path micPath = getTempDir().resolve("mic_input.wav");
                                             AudioHelper.recordMic(micPath, seconds);
 
-                                            reply(source, "§7[Ask] Распознавание...", false);
+                                            reply(source, "§7[Ask] Transcribing...", false);
                                             String recognized = AiLib.transcribe(micPath);
-                                            reply(source, "§7[Вы сказали]: §f" + recognized, false);
+                                            reply(source, "§7[You said]: §f" + recognized, false);
 
-                                            reply(source, "§7[Ask] Генерация ответа...", false);
+                                            reply(source, "§7[Ask] Generating a reply...", false);
                                             String response = AiLib.generate(recognized);
-                                            reply(source, "§a[LLM Ответ]: §f" + response, false);
+                                            reply(source, "§a[LLM reply]: §f" + response, false);
 
                                             byte[] wavData = AiLib.synthesize(response);
                                             AudioHelper.playAndSave(wavData, getTempDir().resolve("output.wav"));

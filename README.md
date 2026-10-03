@@ -1,105 +1,135 @@
-# AiLib
+# AI Lib
 
-Fabric-библиотека для локального AI прямо в Minecraft: генерация текста (llama.cpp),
-синтез речи (piper) и распознавание речи (whisper.cpp) — без облачных сервисов
-и без API-ключей. Нужные бинарники и модели скачиваются автоматически в фоне,
-параллельно, не блокируя запуск игры.
+A **Fabric** library that gives mods a local, offline AI toolbox: an LLM ([llama.cpp](https://github.com/ggml-org/llama.cpp)),
+text-to-speech ([Piper](https://github.com/rhasspy/piper)) and speech-to-text ([whisper.cpp](https://github.com/ggml-org/whisper.cpp)).
+It downloads the native binaries and models by itself in the background and exposes a small, thread-safe Java API.
 
-## Подключение
+> **Status: early alpha (0.1.0).** The API may change before 1.0. Download, verification and extraction paths are
+> checked; end-to-end behaviour still needs more testing on every platform.
 
-```gradle
-repositories {
-    maven { url "https://TODO-твой-maven-репозиторий" }
-}
+## Supported platforms
 
-dependencies {
-    modImplementation "com.cardejibka.ailib:ailib:${ailib_version}"
-}
+| Module | Windows | Linux | macOS |
+|--------|---------|-------|-------|
+| LLM (llama.cpp) | x64, ARM64 | x64, ARM64 | x64, ARM64 |
+| TTS (Piper) | x64 (ARM64 via emulation) | x64 | x64, ARM64 |
+| STT (whisper.cpp) | x64 (ARM64 via emulation) | not built in* | not built in* |
+
+\* whisper.cpp publishes no prebuilt Linux/macOS binaries. Plug in your own engine with `AiLib.setSttEngine(...)`.
+
+Minecraft `1.21.2` – `1.21.5`, Java 21+, Fabric API.
+
+## Quick start for mod authors
+
+Declare the dependency in your `fabric.mod.json` (and depend on / jar-in-jar the library in Gradle):
+
+```json
+"depends": { "ailib": ">=0.1.0" }
 ```
 
-## Быстрый старт
-
-Модель по умолчанию (Llama-3.2-1B) регистрируется и качается автоматически при
-загрузке AiLib — ничего дополнительно делать не нужно:
+> **Never shade or relocate AiLib.** Two relocated copies would download into the same folders and run
+> duplicate native processes. Depend on it normally or use Loom's `include` (jar-in-jar) so Fabric loads exactly one copy.
 
 ```java
-CompletableFuture.runAsync(() -> {
-    try {
-        String answer = AiLib.generate("Привет! Расскажи анекдот про крипер.");
-        // ... что-то сделать с ответом
-    } catch (AiLibException e) {
-        // e.getReason() == NOT_READY / TIMEOUT / PROCESS_FAILED / BUSY / ...
-        // e.getProgressPercent() — если NOT_READY, процент загрузки (или -1)
-    }
+// Run these off the main thread, or use the *Async variants.
+String reply = AiLib.generate("Greet the player in one sentence.");
+
+AiLib.generateAsync(LlmRequest.builder("Describe this village")
+        .systemPrompt("You are a medieval storyteller.")
+        .maxTokens(200).temperature(0.8).build(), AiLib.DEFAULT_LLM_MODEL)
+     .thenAccept(text -> { /* ... */ });
+
+byte[] wav = AiLib.synthesize("Hello there!");
+String heard = AiLib.transcribe(Path.of("recording.wav")); // 16 kHz mono WAV
+```
+
+### Your own model
+
+```java
+ModelSpec qwen = new ModelSpec("mymod:qwen2.5-1.5b", EngineType.LLM, "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "https://huggingface.co/<user>/<repo>/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        "<sha256 of the file>")                       // sha256 is optional but recommended
+        .withPromptFormat(PromptFormat.CHATML);
+
+ModelHandle handle = AiLib.register(qwen);            // never throws
+handle.state();          // DOWNLOADING | VERIFYING | READY | FAILED
+handle.progress();       // 0..1, or -1 if unknown
+handle.failureReason();  // DOMAIN_BLOCKED, FILENAME_COLLISION, NETWORK, HTTP_ERROR, INCOMPLETE, HASH_MISMATCH, UNKNOWN
+handle.retry();          // after FAILED
+handle.future();         // CompletableFuture<Boolean>
+```
+
+A voice with several files:
+
+```java
+ModelSpec voice = new ModelSpec("mymod:voice", EngineType.TTS, "en_US-amy-medium.onnx", "https://.../en_US-amy-medium.onnx")
+        .withCompanions(new ModelFile("en_US-amy-medium.onnx.json", "https://.../en_US-amy-medium.onnx.json"));
+```
+
+Calls throw `AiLibException` with a `Reason` (`NOT_READY` carries `getProgressPercent()`, `BUSY`, `TIMEOUT`, `UNSUPPORTED_PLATFORM`, ...).
+Handle them: a model may simply not be downloaded yet.
+
+### Custom engines (e.g. Vosk, a llama-server backend)
+
+Implement `LlmEngine` / `TtsEngine` / `SttEngine` and call `AiLib.setXxxEngine(...)` during your mod initialization.
+A custom engine owns its runtime: AiLib asks `engine.isNativeReady()` instead of downloading its built-in natives.
+Models are still described by `ModelSpec` (single files, optionally with companions). Archives/directories are not supported yet.
+Set `bootstrapDefaults` to `false` in the config if your pack replaces engines, so the default downloads are skipped.
+
+### Progress for your own HUD
+
+```java
+AiLib.subscribeProgress(new ProgressSink() {
+    public void onProgress(String taskId, String label, long downloaded, long total) { /* ... */ }
+    public void onFinished(String taskId, boolean success) { /* ... */ }
 });
 ```
 
-**Важно:** методы `AiLib.generate/synthesize/transcribe` синхронные и блокируют
-поток на время работы нативного процесса — всегда вызывай их из фонового потока,
-никогда из главного потока клиента/сервера.
+## Using it in a modpack
 
-## Своя модель
+- One copy of AiLib is shared by all mods that depend on it; downloads are de-duplicated.
+- Two models may share a file only if file name, url **and** sha256 are identical; otherwise the second registration fails with `FILENAME_COLLISION`.
+- Each engine handles one request at a time. Other callers wait up to 30 s and then get `BUSY`.
+- Model downloads are limited to hosts in `allowedModelDownloadDomains` (see below). Add a domain there for models hosted elsewhere.
+- Defaults (about 1 GB: Llama 3.2 1B, a Piper voice, Whisper tiny) are downloaded at startup. Set `bootstrapDefaults: false` to download lazily instead.
 
-Любой мод может зарегистрировать свою модель по прямой ссылке — она скачается
-в фоне параллельно со всем остальным, независимо от того, кто и когда её
-зарегистрировал:
+## Configuration (`config/ailib.json`)
 
-```java
-ModelSpec myModel = new ModelSpec(
-        "mymod:mistral-7b",                     // уникальный id — используй свой modid как префикс
-        EngineType.LLM,
-        "mistral-7b-instruct-q4.gguf",          // имя файла в ai_models/
-        "https://huggingface.co/.../mistral-7b-instruct-q4.gguf",
-        "abcd1234...sha256...");                // необязательно, но настоятельно рекомендуется
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `bootstrapDefaults` | `true` | Download default natives/models at startup (otherwise on first use). |
+| `commandPermissionLevel` | `2` | Permission level for `/ailib` commands. |
+| `llmSystemPrompt` | Russian assistant prompt | Default system prompt (overridable per call). |
+| `llmMaxTokens`, `llmContextSize`, `llmTemperature`, `llmTimeoutSeconds` | `128`, `2048`, `0.6`, `35` | LLM defaults. |
+| `llmExtraArgs` | `[]` | Extra `llama-cli` arguments, e.g. `["-no-cnv"]` if your llama.cpp build starts in conversation mode. |
+| `ttsTimeoutSeconds` | `15` | TTS timeout. |
+| `sttLanguage`, `sttThreads`, `sttTimeoutSeconds` | `auto`, `2`, `30` | STT settings. |
+| `maxParallelDownloads` | `3` | Parallel download threads. |
+| `allowedModelDownloadDomains` | huggingface.co, github.com, ... | Hosts models may be downloaded from (exact or subdomain). |
 
-AiLib.registerModel(myModel);
+A syntactically broken file is never overwritten; defaults are used until you fix it.
 
-// ...позже, в фоновом потоке:
-String answer = AiLib.generate("Привет!", myModel);
-```
+## Commands
 
-Домен ссылки должен входить в allow-list (`config/ailib.json` ->
-`allowedModelDownloadDomains`, по умолчанию huggingface.co и github.com) — иначе
-`registerModel` бросит `IllegalArgumentException`. Это защита от того, что чужой
-мод незаметно для игрока тянет файлы с произвольных доменов через твою библиотеку.
+`/ailib llm <prompt>`, `/ailib tts <text>`, `/ailib stt <file inside the game folder>`, `/ailib models`,
+and, on the client only, `/ailib record <seconds>` and `/ailib ask <seconds>` (microphone to LLM to speech).
+Operators only by default.
 
-## Своя реализация движка
+## Security notes
 
-Если тебе не подходит llama.cpp/piper/whisper.cpp (например, нужен llama-server
-вместо разового процесса) — реализуй `LlmEngine`/`TtsEngine`/`SttEngine` из пакета
-`com.cardejibka.ailib.api` самостоятельно. Пакеты `downloader` и `engine` — это
-внутренняя реализация, не публичный контракт, полагаться на них напрямую не стоит.
+- Natives are downloaded over https from fixed URLs and verified against pinned sha256 values.
+- Model file names are validated (no paths, `..`, or drive prefixes); only https URLs are accepted.
+- The allow-list is checked against the original host; redirects to CDNs are followed (https only, no downgrade).
+- Player-supplied text sent to an LLM is not sanitized: treat model output as untrusted.
+- Running local models uses real CPU and RAM. On a server, keep the commands restricted.
 
-## Конфиг
+## Known limitations
 
-`config/ailib.json` создаётся автоматически при первом запуске:
+- Each request starts a new native process, so the model is reloaded every time (seconds of latency).
+- No token streaming, conversation history or download cancellation yet.
+- STT input is a WAV file path only.
+- The HUD only renders in-world, not in menus, and a failed download is not announced in the UI (check the log or `/ailib models`).
 
-| Поле | Что делает |
-|---|---|
-| `llmSystemPrompt` | системный промпт для LLM |
-| `llmMaxTokens`, `llmContextSize`, `llmTemperature`, `llmTimeoutSeconds` | параметры генерации |
-| `ttsTimeoutSeconds` | таймаут синтеза речи |
-| `sttLanguage`, `sttThreads`, `sttTimeoutSeconds` | параметры распознавания |
-| `maxParallelDownloads` | сколько артефактов может качаться одновременно |
-| `allowedModelDownloadDomains` | allow-list доменов для моделей сторонних модов |
+## License
 
-## Команды (для проверки/дебага)
-
-- `/ailib llm <текст>` — генерация ответа
-- `/ailib tts <текст>` — синтез речи, сохраняет и проигрывает (клиент)
-- `/ailib stt <путь к wav>` — распознавание файла
-- `/ailib record <секунды>` — запись с микрофона + распознавание (только клиент)
-- `/ailib ask <секунды>` — голос → текст → LLM → голос (только клиент)
-
-## Лицензии
-
-Код самой библиотеки — CC0-1.0 (см. `LICENSE`). Скачиваемые в рантайме бинарники
-и модели (llama.cpp, whisper.cpp, piper, веса моделей) распространяются на
-собственных условиях — см. `THIRD_PARTY_NOTICES.md`. Ответственность за лицензию
-модели, зарегистрированной через `AiLib.registerModel`, лежит на том, кто её
-зарегистрировал.
-
-## Версионирование
-
-Пока `0.x.y` — публичный API (`com.cardejibka.ailib.api`) ещё может меняться
-между минорными версиями. См. `CHANGELOG.md`.
+MIT, see [LICENSE](LICENSE).

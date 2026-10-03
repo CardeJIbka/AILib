@@ -8,19 +8,16 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * В твоей NeoForge-версии это был один global boolean + один currentTask + один
- * progress — то есть в один момент времени можно было показать только одну
- * загрузку. Раз теперь несколько артефактов (натив LLM, натив TTS, натив STT,
- * несколько моделей) качаются ПАРАЛЛЕЛЬНО, трекер должен уметь держать
- * несколько активных задач одновременно, каждую со своим прогрессом.
+ * Several artifacts (LLM/TTS/STT natives and any number of models) download IN PARALLEL, so the
+ * tracker keeps several active tasks at once, each with its own progress.
  * <p>
- * Реализует {@link ProgressSink} — подписывается на общую {@code ProgressBus}
- * из common-кода (см. AiLibClient), а не читает состояние загрузчика напрямую.
+ * Implements {@link ProgressSink}: it subscribes to the common ProgressBus (see AiLibClient)
+ * instead of reading the downloader's state directly.
  */
 public class DownloadTracker implements ProgressSink {
 
     public record TaskState(String id, String label, long downloaded, long total, long startedAtMs) {
-        /** 0..1, либо -1 если сервер не прислал размер (индикатор "неизвестно"). */
+        /** 0..1, or -1 if the server sent no size (the "unknown" indicator). */
         public float progress() {
             return total > 0 ? (float) downloaded / total : -1f;
         }
@@ -44,7 +41,7 @@ public class DownloadTracker implements ProgressSink {
         return !ACTIVE_TASKS.isEmpty();
     }
 
-    /** Отсортировано по времени начала — старые (более близкие к завершению обычно) сверху. */
+    /** Sorted by start time: older tasks (usually closer to completion) first. */
     public static List<TaskState> getActiveTasks() {
         return ACTIVE_TASKS.values().stream()
                 .sorted(Comparator.comparingLong(TaskState::startedAtMs))

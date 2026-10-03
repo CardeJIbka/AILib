@@ -12,9 +12,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Настройки в config/ailib.json. Если файла нет — создаётся с дефолтами.
- * Если файл есть, но битый — он НЕ перезаписывается (правки пользователя не теряются),
- * на время работы используются дефолты.
+ * Settings stored in config/ailib.json. A missing file is created with defaults.
+ * An existing but broken file is NOT overwritten (so manual edits are never lost);
+ * defaults are used for the current run instead.
  */
 public final class AiLibConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger("AiLib-Config");
@@ -22,10 +22,10 @@ public final class AiLibConfig {
 
     private static volatile AiLibConfig instance;
 
-    // --- Общее ---
-    /** false = ничего не качать при старте, всё лениво при первом вызове API. */
+    // --- General ---
+    /** false = download nothing at startup; everything is fetched lazily on the first API call. */
     public boolean bootstrapDefaults = true;
-    /** Уровень прав для команд /ailib (по умолчанию 2 = операторы). */
+    /** Permission level required for /ailib commands (default 2 = operators). */
     public int commandPermissionLevel = 2;
 
     // --- LLM ---
@@ -34,7 +34,7 @@ public final class AiLibConfig {
     public int llmContextSize = 2048;
     public double llmTemperature = 0.6;
     public int llmTimeoutSeconds = 35;
-    /** Доп. аргументы llama-cli, например ["-no-cnv"] для сборок, где по умолчанию включён диалоговый режим. */
+    /** Extra llama-cli arguments, e.g. ["-no-cnv"] for builds that default to conversation mode. */
     public List<String> llmExtraArgs = List.of();
 
     // --- TTS ---
@@ -45,12 +45,12 @@ public final class AiLibConfig {
     public int sttThreads = 2;
     public int sttTimeoutSeconds = 30;
 
-    // --- Скачивание ---
+    // --- Downloads ---
     public int maxParallelDownloads = 3;
     /**
-     * Домены, с которых разрешено скачивать МОДЕЛИ, зарегистрированные сторонними
-     * модами. Проверяется по хосту исходного URL (точное совпадение или поддомен).
-     * Редиректы на CDN этой проверке не подлежат. Нативы — ссылки фиксированы в библиотеке.
+     * Domains models registered by third-party mods may be downloaded from. Checked against the host
+     * of the original URL (exact match or subdomain). Redirects to CDNs are not checked.
+     * The built-in natives are not subject to this check: their URLs are fixed in the library.
      */
     public List<String> allowedModelDownloadDomains = List.of(
             "huggingface.co",
@@ -86,10 +86,10 @@ public final class AiLibConfig {
                     return loaded;
                 }
             } catch (Exception e) {
-                LOGGER.error("Не удалось прочитать {} ({}). Файл НЕ перезаписан — исправь его вручную; "
-                        + "пока используются значения по умолчанию.", path, e.getMessage());
+                LOGGER.error("Could not read {} ({}). The file was NOT overwritten: fix it by hand; "
+                        + "defaults are used for now.", path, e.getMessage());
             }
-            return new AiLibConfig(); // файл существует, но непригоден: не трогаем его
+            return new AiLibConfig(); // the file exists but is unusable: leave it alone
         }
 
         AiLibConfig defaults = new AiLibConfig();
@@ -97,17 +97,17 @@ public final class AiLibConfig {
             Files.createDirectories(path.getParent());
             Files.writeString(path, GSON.toJson(defaults));
         } catch (Exception e) {
-            LOGGER.error("Не удалось записать конфиг по умолчанию в {}: {}", path, e.getMessage());
+            LOGGER.error("Could not write the default config to {}: {}", path, e.getMessage());
         }
         return defaults;
     }
 
-    /** Сбросить кэш и перечитать файл с диска. */
+    /** Drops the cache and re-reads the file from disk. */
     public static synchronized void reload() {
         instance = load();
     }
 
-    /** Чинит null и неадекватные значения, пришедшие из ручной правки JSON. */
+    /** Repairs nulls and nonsensical values coming from a hand-edited JSON file. */
     public void sanitize() {
         AiLibConfig d = new AiLibConfig();
         if (llmSystemPrompt == null) llmSystemPrompt = d.llmSystemPrompt;

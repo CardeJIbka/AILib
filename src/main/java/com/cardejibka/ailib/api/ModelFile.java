@@ -4,8 +4,8 @@ import java.net.URI;
 import java.util.Locale;
 
 /**
- * Один файл модели: имя на диске + откуда качать + (опционально) sha256.
- * Валидация живёт здесь, поэтому ModelSpec и его companion-файлы защищены одинаково.
+ * One model file: its name on disk, where to download it from and (optionally) its sha256.
+ * Validation lives here so a ModelSpec and its companion files are protected identically.
  */
 public record ModelFile(String fileName, String url, String sha256) {
 
@@ -20,7 +20,7 @@ public record ModelFile(String fileName, String url, String sha256) {
 
     static void validateFileName(String fileName) {
         if (fileName == null || fileName.isBlank()) {
-            throw new IllegalArgumentException("ModelSpec.fileName не может быть пустым");
+            throw new IllegalArgumentException("ModelSpec.fileName must not be blank");
         }
         String lower = fileName.toLowerCase(Locale.ROOT);
         if (fileName.length() > 128
@@ -29,23 +29,23 @@ public record ModelFile(String fileName, String url, String sha256) {
                 || fileName.indexOf('\0') >= 0
                 || fileName.startsWith(".")
                 || lower.endsWith(".part")) {
-            throw new IllegalArgumentException("fileName должен быть простым именем файла "
-                    + "(без путей, '..', ':', ведущей точки и суффикса .part): " + fileName);
+            throw new IllegalArgumentException("fileName must be a plain file name "
+                    + "(no paths, '..', ':', leading dot or '.part' suffix): " + fileName);
         }
     }
 
     static void validateUrl(String url) {
         if (url == null || url.isBlank()) {
-            throw new IllegalArgumentException("ModelSpec.url не может быть пустым");
+            throw new IllegalArgumentException("ModelSpec.url must not be blank");
         }
         URI uri;
         try {
             uri = URI.create(url);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Некорректный url: " + url);
+            throw new IllegalArgumentException("Malformed url: " + url);
         }
         if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) {
-            throw new IllegalArgumentException("url должен быть https:// с указанием хоста: " + url);
+            throw new IllegalArgumentException("url must be https:// and contain a host: " + url);
         }
     }
 }

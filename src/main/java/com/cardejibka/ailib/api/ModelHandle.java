@@ -4,9 +4,9 @@ import java.nio.file.Path;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Хэндл зарегистрированной модели: состояние, прогресс, причина сбоя, повтор, удаление.
- * Получается из {@link AiLib#register(ModelSpec)}; регистрация никогда не бросает —
- * проблемы (запрещённый домен, коллизия имени) приходят как состояние FAILED + причина.
+ * Handle of a registered model: state, progress, failure reason, retry, delete.
+ * Obtained from {@link AiLib#register(ModelSpec)}. Registration never throws: problems
+ * (blocked domain, file-name collision) are reported as state FAILED plus a reason.
  */
 public interface ModelHandle {
 
@@ -24,23 +24,23 @@ public interface ModelHandle {
         return state() == State.READY;
     }
 
-    /** 0..1 для текущего файла модели, либо -1 если неизвестно. */
+    /** 0..1 for the file currently being downloaded, or -1 if unknown. */
     float progress();
 
-    /** null, если состояние не FAILED. */
+    /** null unless the state is FAILED. */
     FailureReason failureReason();
 
     String failureMessage();
 
-    /** Завершается true/false по итогам текущей попытки. После retry() возвращает новый future. */
+    /** Completes with true/false when the current attempt finishes. After retry() a new future is returned. */
     CompletableFuture<Boolean> future();
 
-    /** Путь к основному файлу модели на диске. */
+    /** Path of the main model file on disk. */
     Path path();
 
-    /** Повторить загрузку, если состояние FAILED. @return true, если повтор запущен. */
+    /** Retries the download if the state is FAILED. @return true if a retry was started */
     boolean retry();
 
-    /** Удалить файлы и снять регистрацию. Не работает во время загрузки. @return true при успехе. */
+    /** Deletes the files and unregisters the model. Not possible while downloading. @return true on success */
     boolean delete();
 }

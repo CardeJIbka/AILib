@@ -7,19 +7,18 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Описание модели. Кроме основного файла может содержать companion-файлы
- * (например, .onnx.json для голоса Piper) — модель считается готовой, только
- * когда скачаны ВСЕ файлы.
+ * Describes a model. Besides the main file it may carry companion files
+ * (e.g. the .onnx.json of a Piper voice); the model is ready only when ALL files are on disk.
  *
- * @param promptFormat шаблон чата для LLM-моделей (для TTS/STT игнорируется)
+ * @param promptFormat chat template for LLM models (ignored for TTS/STT)
  */
 public record ModelSpec(String id, EngineType engine, String fileName, String url, String sha256,
                         List<ModelFile> companions, PromptFormat promptFormat) {
 
     public ModelSpec {
-        if (id == null || id.isBlank()) throw new IllegalArgumentException("ModelSpec.id не может быть пустым");
-        if (engine == null) throw new IllegalArgumentException("ModelSpec.engine не может быть null");
-        new ModelFile(fileName, url, sha256); // валидация имени файла и url
+        if (id == null || id.isBlank()) throw new IllegalArgumentException("ModelSpec.id must not be blank");
+        if (engine == null) throw new IllegalArgumentException("ModelSpec.engine must not be null");
+        new ModelFile(fileName, url, sha256); // validates file name and url
         companions = companions == null ? List.of() : List.copyOf(companions);
         promptFormat = promptFormat == null ? PromptFormat.LLAMA3 : promptFormat;
 
@@ -27,7 +26,7 @@ public record ModelSpec(String id, EngineType engine, String fileName, String ur
         seen.add(fileName.toLowerCase(Locale.ROOT));
         for (ModelFile c : companions) {
             if (!seen.add(c.fileName().toLowerCase(Locale.ROOT))) {
-                throw new IllegalArgumentException("Повторяющееся имя файла в модели: " + c.fileName());
+                throw new IllegalArgumentException("Duplicate file name in model: " + c.fileName());
             }
         }
     }
@@ -54,7 +53,7 @@ public record ModelSpec(String id, EngineType engine, String fileName, String ur
         return new ModelFile(fileName, url, sha256);
     }
 
-    /** Основной файл + companion'ы. */
+    /** Main file followed by the companions. */
     public List<ModelFile> allFiles() {
         List<ModelFile> all = new ArrayList<>(companions.size() + 1);
         all.add(mainFile());

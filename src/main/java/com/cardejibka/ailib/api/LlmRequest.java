@@ -1,17 +1,17 @@
 package com.cardejibka.ailib.api;
 
 /**
- * Параметры одного LLM-вызова. null-поля означают «взять из config/ailib.json»
- * (формат — из ModelSpec модели).
+ * Parameters of a single LLM call. A null field means "use the value from config/ailib.json"
+ * (the format falls back to the one in the model's {@link ModelSpec}).
  */
 public record LlmRequest(String prompt, String systemPrompt, Integer maxTokens, Double temperature,
                          PromptFormat format) {
 
     public LlmRequest {
-        if (prompt == null || prompt.isBlank()) throw new IllegalArgumentException("LlmRequest.prompt не может быть пустым");
-        if (maxTokens != null && maxTokens < 1) throw new IllegalArgumentException("maxTokens должен быть >= 1");
+        if (prompt == null || prompt.isBlank()) throw new IllegalArgumentException("LlmRequest.prompt must not be blank");
+        if (maxTokens != null && maxTokens < 1) throw new IllegalArgumentException("maxTokens must be >= 1");
         if (temperature != null && (temperature.isNaN() || temperature < 0)) {
-            throw new IllegalArgumentException("temperature должна быть >= 0");
+            throw new IllegalArgumentException("temperature must be >= 0");
         }
     }
 

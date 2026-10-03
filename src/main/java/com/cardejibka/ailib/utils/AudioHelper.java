@@ -49,13 +49,13 @@ public class AudioHelper {
 
     public static void recordMic(Path outputPath, int durationSeconds) throws Exception {
         if (!isClientEnvironment()) {
-            throw new IllegalStateException("Запись с микрофона доступна только на клиенте.");
+            throw new IllegalStateException("Microphone recording is only available on the client.");
         }
 
         AudioFormat format = new AudioFormat(16000, 16, 1, true, false);
         DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
         if (!AudioSystem.isLineSupported(info)) {
-            throw new Exception("Микрофон не найден или не поддерживается!");
+            throw new Exception("No microphone found or it is not supported!");
         }
 
         TargetDataLine line = (TargetDataLine) AudioSystem.getLine(info);

@@ -15,14 +15,13 @@ import java.time.Duration;
 import java.util.HexFormat;
 
 /**
- * Один генерик-метод для скачивания и natives-архивов, и файлов моделей.
- * Качает во временный "<target>.part", проверяет размер и sha256 (если передан),
- * и только потом атомарно переименовывает — обрыв никогда не оставляет битый
- * файл под финальным именем.
+ * One generic method for downloading both native archives and model files.
+ * Downloads into a temporary "&lt;target&gt;.part", checks the size and the sha256 (if given) and only
+ * then atomically renames it, so an interrupted download never leaves a broken file under the final name.
  * <p>
- * Только https. Редиректы разрешены, кроме downgrade https -> http. Домен редиректа
- * НЕ сверяется с allow-list намеренно: HuggingFace/GitHub отдают файлы с CDN-доменов
- * вроде cas-bridge.xethub.hf.co, а доверие к ним наследуется от исходного (проверенного) хоста.
+ * https only. Redirects are followed except https -&gt; http downgrades. The redirect target's domain is
+ * deliberately NOT checked against the allow-list: HuggingFace/GitHub serve files from CDN hosts such as
+ * cas-bridge.xethub.hf.co, so trust is inherited from the (checked) original host.
  */
 public final class FileDownloader {
 
@@ -40,7 +39,7 @@ public final class FileDownloader {
         try {
             URI uri = URI.create(url);
             if (!"https".equalsIgnoreCase(uri.getScheme())) {
-                throw new DownloadException(DownloadException.Kind.NETWORK, "Разрешён только https: " + url);
+                throw new DownloadException(DownloadException.Kind.NETWORK, "Only https is allowed: " + url);
             }
             Files.createDirectories(targetPath.getParent());
 
@@ -56,10 +55,10 @@ public final class FileDownloader {
 
                 if (response.statusCode() != 200) {
                     try (InputStream ignored = response.body()) {
-                        // закрываем тело, чтобы освободить соединение
+                        // close the body to release the connection
                     }
                     throw new DownloadException(DownloadException.Kind.HTTP_ERROR,
-                            "HTTP " + response.statusCode() + " при скачивании " + url);
+                            "HTTP " + response.statusCode() + " while downloading " + url);
                 }
 
                 long total = response.headers().firstValueAsLong("Content-Length").orElse(-1);
@@ -81,15 +80,15 @@ public final class FileDownloader {
 
                 if (total > 0 && downloaded != total) {
                     throw new DownloadException(DownloadException.Kind.INCOMPLETE,
-                            "Файл " + targetPath.getFileName() + " скачан не полностью: " + downloaded + " из " + total + " байт");
+                            "File " + targetPath.getFileName() + " is incomplete: " + downloaded + " of " + total + " bytes");
                 }
 
                 if (digest != null) {
                     String actualHex = HexFormat.of().formatHex(digest.digest());
                     if (!actualHex.equalsIgnoreCase(expectedSha256Hex)) {
                         throw new DownloadException(DownloadException.Kind.HASH_MISMATCH,
-                                "Несовпадение sha256 для " + targetPath.getFileName()
-                                        + ": ожидалось " + expectedSha256Hex + ", получено " + actualHex);
+                                "sha256 mismatch for " + targetPath.getFileName()
+                                        + ": expected " + expectedSha256Hex + ", got " + actualHex);
                     }
                 }
 
@@ -101,11 +100,11 @@ public final class FileDownloader {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             cleanup(tmpPath);
-            throw new DownloadException(DownloadException.Kind.NETWORK, "Загрузка прервана: " + url, e);
+            throw new DownloadException(DownloadException.Kind.NETWORK, "Download interrupted: " + url, e);
         } catch (Exception e) {
             cleanup(tmpPath);
             throw new DownloadException(DownloadException.Kind.NETWORK,
-                    "Ошибка при скачивании " + url + ": " + e.getMessage(), e);
+                    "Error while downloading " + url + ": " + e.getMessage(), e);
         }
     }
 

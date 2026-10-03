@@ -3,16 +3,16 @@ package com.cardejibka.ailib.api;
 import java.util.List;
 
 /**
- * Шаблон чата, который ожидает конкретная семья моделей. Раньше в LlamaEngine
- * был зашит только Llama 3, из-за чего любая другая модель отвечала мусором.
+ * Chat template expected by a given model family. Using the wrong template makes
+ * a model answer with garbage, so it is part of the {@link ModelSpec}.
  */
 public enum PromptFormat {
     LLAMA3,
-    CHATML,   // Qwen, многие Mistral-файнтюны, Phi-3 (совместим в большинстве случаев)
+    CHATML,   // Qwen, many Mistral fine-tunes, Phi-3 (compatible in most cases)
     GEMMA,
-    RAW;      // без шаблона — промпт уходит как есть
+    RAW;      // no template: the prompt is sent as is
 
-    /** Маркеры конца ответа от всех поддерживаемых форматов + служебные строки llama-cli. */
+    /** End-of-answer markers of all supported formats plus llama-cli's own status line. */
     public static final List<String> STOP_MARKERS = List.of(
             "<|eot_id|>", "<|im_end|>", "<end_of_turn>", "<|end_of_text|>",
             "<|endoftext|>", "</s>", "[end of text]", "[ Prompt:");

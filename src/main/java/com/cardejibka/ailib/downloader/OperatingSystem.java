@@ -28,6 +28,6 @@ public enum OperatingSystem {
         if (osName.contains("win")) return WINDOWS;
         if (osName.contains("mac") || osName.contains("darwin")) return MACOS;
         if (osName.contains("nux") || osName.contains("nix")) return LINUX;
-        throw new UnsupportedOperationException("Неподдерживаемая операционная система: " + osName);
+        throw new UnsupportedOperationException("Unsupported operating system: " + osName);
     }
 }
