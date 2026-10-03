@@ -1,46 +1,29 @@
 # Changelog
 
-Формат основан на [Keep a Changelog](https://keepachangelog.com/), версии — semver.
-Пока `0.x.y` — любая минорная версия может содержать breaking changes в `api`-пакете.
+## 0.1.0 (early alpha)
 
-## [Unreleased]
+First public version. The API is **not stable** and may change before 1.0.
 
-### Added
-- Конфиг `config/ailib.json`: системный промпт, параметры генерации, таймауты,
-  allow-list доменов для скачивания моделей сторонних модов.
-- `package-info.java` для `downloader`/`engine`, явно помечающие их как внутреннюю
-  реализацию (публичный контракт — только пакет `api`).
-- Юнит-тесты на `ModelSpec` и allow-list доменов (`com.cardejibka.ailib.AiLibConfigTest`), не требуют
-  Minecraft/Fabric окружения.
+### Features
+- Local LLM (llama.cpp), TTS (Piper) and STT (whisper.cpp) behind one small API: `AiLib.generate / synthesize / transcribe` plus `*Async` variants.
+- Automatic background download of native binaries and models; natives are pinned by sha256.
+- Register your own models: `AiLib.register(ModelSpec)` returns a `ModelHandle` (state, progress, failure reason, retry, delete).
+- Multi-file models (`ModelSpec.withCompanions`), e.g. a Piper voice (`.onnx` + `.onnx.json`).
+- Chat templates per model (`PromptFormat`: LLAMA3, CHATML, GEMMA, RAW) and per-call parameters (`LlmRequest`).
+- Replaceable engines (`setLlmEngine / setTtsEngine / setSttEngine`); a custom engine manages its own runtime.
+- Several mods can share one model file (identical file name + url + sha256).
+- Progress subscription for custom HUDs (`AiLib.subscribeProgress`).
+- `/ailib llm|tts|stt|models` (operators only by default), client-only `/ailib record|ask`.
 
-### Changed
-- Размер пула параллельных загрузок (`AiLibExecutors.DOWNLOAD_EXECUTOR`) теперь
-  берётся из конфига вместо хардкода.
-- `LlamaEngine`/`PiperEngine`/`WhisperEngine` читают промпт/таймауты/потоки из
-  `AiLibConfig` вместо магических чисел в коде.
+### Safety and reliability
+- Model file names are validated (no path traversal); URLs must be https; downloads are allow-listed by domain.
+- Downloads go to `.part` files and are renamed atomically; sha256 and size are verified.
+- Failed downloads are retryable instead of being cached forever.
+- A broken `config/ailib.json` is never overwritten.
+- Interrupted native installs are detected via an `.installed` marker.
 
-## [0.1.0] — первая версия с публичным API
-
-### Added
-- Публичный фасад `AiLib` (`generate`/`synthesize`/`transcribe`, `registerModel`,
-  `isModelReady`/`isNativeReady`).
-- Реестр моделей `ModelSpec` — сторонние моды регистрируют модель по своей ссылке
-  вместо жёстко зашитой в библиотеке.
-- Параллельная фоновая загрузка нативов и моделей (`AiLibBootstrap`,
-  `AiLibExecutors.DOWNLOAD_EXECUTOR`), не блокирующая запуск игры.
-- HUD-оверлей прогресса загрузки на клиенте (`DownloadTracker` + `LoadingOverlay`),
-  поддерживает несколько одновременных задач.
-- Явное исключение `AiLibException` с кодом причины (`NOT_READY`, `TIMEOUT`,
-  `PROCESS_FAILED`, `BUSY`, `CLIENT_ONLY`) вместо строк-ошибок в теле ответа.
-- Кроссплатформенная поддержка натива (Windows/Linux/macOS, x64/arm64) для
-  llama.cpp, whisper.cpp и piper.
-- Fair-семафоры на движок (`LLM_SLOT`/`TTS_SLOT`/`STT_SLOT`), чтобы параллельные
-  запросы от разных модов не грузили несколько тяжёлых моделей в память разом.
-
-### Breaking (относительно первой версии, ещё не выпущенной публично)
-- `LlamaEngine.generate(String)` / `PiperEngine.synthesize(String)` /
-  `WhisperEngine.transcribe(Path)` статические методы заменены на инстанс-методы
-  через интерфейсы `LlmEngine`/`TtsEngine`/`SttEngine`, принимающие явный путь к
-  модели. Используй `AiLib.generate(...)` вместо прямого вызова классов движков.
-- `NativeConfig.ModelFile` enum удалён — модели теперь регистрируются через
-  `ModelSpec` + `AiLib.registerModel(...)`.
+### Known limitations
+- STT works out of the box on Windows x64 only (whisper.cpp ships no prebuilt Linux/macOS binaries).
+- Each request starts a fresh native process (the model is reloaded every time): expect seconds of latency.
+- No streaming, no conversation history, no download cancellation.
+- Not yet tested end to end on every platform.

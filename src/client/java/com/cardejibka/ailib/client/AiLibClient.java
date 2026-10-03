@@ -5,23 +5,20 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 
 /**
- * Единственная причина существования отдельного client-entrypoint в текущей
- * архитектуре: HUD (спиннер загрузки) — это клиентский рендер, который не может
- * жить в common-коде. Вся остальная логика (скачивание, движки) — common и
- * работает на выделенном сервере точно так же, просто без HUD поверх.
+ * The only reason for a separate client entrypoint: the HUD (download cards) is client-side
+ * rendering and cannot live in common code. Everything else (downloads, engines) is common and
+ * works the same on a dedicated server, just without the HUD on top.
  */
 public class AiLibClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // DownloadTracker сам по себе не знает о AiLibBootstrap — он просто подписчик
-        // на ProgressBus, поэтому его можно так же легко заменить/дополнить другим
-        // мод-потребителем, который захочет свой собственный HUD.
+        // DownloadTracker knows nothing about AiLibBootstrap: it is just a ProgressBus subscriber,
+        // so another mod can add or replace it with its own HUD just as easily.
         ProgressBus.subscribe(new DownloadTracker());
 
-        // Сигнатура HudRenderCallback здесь — (GuiGraphics, DeltaTracker), актуальная
-        // для 1.21.2+. Если когда-нибудь откатишься на 1.21/1.21.1, там второй параметр —
-        // float partialTick, и сигнатуру LoadingOverlay.render нужно будет вернуть обратно.
+        // The HudRenderCallback signature here is (GuiGraphics, DeltaTracker), which is what 1.21.2+ uses.
+        // On 1.21/1.21.1 the second parameter is a float partialTick and LoadingOverlay.render must change back.
         HudRenderCallback.EVENT.register(LoadingOverlay::render);
     }
 }

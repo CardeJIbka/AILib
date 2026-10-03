@@ -42,7 +42,7 @@ public final class NativeInstaller {
     private static Path safeResolve(Path root, String entryName) {
         Path p = root.resolve(entryName).normalize();
         if (!p.startsWith(root)) {
-            throw new SecurityException("Попытка выхода за пределы папки установки: " + entryName);
+            throw new SecurityException("Path escapes the install directory: " + entryName);
         }
         return p;
     }
@@ -72,7 +72,7 @@ public final class NativeInstaller {
         }
     }
 
-    /** Минимальный tar-извлекатель без зависимостей: ustar + GNU long names + pax path + симлинки/хардлинки. */
+    /** Minimal dependency-free tar extractor: ustar + GNU long names + pax path + symlinks/hardlinks. */
     private static void extractTarGz(Path tarGzFile, Path root, boolean stripRootFolder) throws Exception {
         try (InputStream fis = Files.newInputStream(tarGzFile);
              GZIPInputStream gis = new GZIPInputStream(fis)) {
@@ -92,13 +92,13 @@ public final class NativeInstaller {
                 long size = parseOctal(header, 124, 12);
                 long padded = ((size + 511) / 512) * 512;
 
-                if (type == 'L') { // GNU long name: данные — имя следующей записи
+                if (type == 'L') { // GNU long name: the data is the name of the next entry
                     byte[] data = gis.readNBytes((int) size);
                     pendingLongName = new String(data, StandardCharsets.UTF_8).replace("\0", "").trim();
                     skipFully(gis, padded - size);
                     continue;
                 }
-                if (type == 'x') { // pax-заголовок: достаём path=...
+                if (type == 'x') { // pax header: pick up path=...
                     byte[] data = gis.readNBytes((int) size);
                     String text = new String(data, StandardCharsets.UTF_8);
                     for (String line : text.split("\n")) {
@@ -129,11 +129,11 @@ public final class NativeInstaller {
                 if (type == '5') {
                     Files.createDirectories(newPath);
                     skipFully(gis, padded);
-                } else if (type == '2') { // симлинк
+                } else if (type == '2') { // symlink
                     String linkName = cString(header, 157, 100);
                     createSymlink(root, newPath, linkName);
                     skipFully(gis, padded);
-                } else if (type == '1') { // хардлинк: копируем уже распакованный файл
+                } else if (type == '1') { // hardlink: copy the already extracted file
                     String linkName = stripName(cString(header, 157, 100), stripRootFolder);
                     Path source = safeResolve(root, linkName);
                     if (Files.exists(source)) {
@@ -167,14 +167,14 @@ public final class NativeInstaller {
         try {
             Path resolvedTarget = (link.getParent() != null ? link.getParent() : root).resolve(linkName).normalize();
             if (!resolvedTarget.startsWith(root)) {
-                LOGGER.warn("Симлинк {} -> {} указывает за пределы папки установки, пропущен", link, linkName);
+                LOGGER.warn("Symlink {} -> {} points outside the install directory, skipped", link, linkName);
                 return;
             }
             if (link.getParent() != null) Files.createDirectories(link.getParent());
             Files.deleteIfExists(link);
             Files.createSymbolicLink(link, Path.of(linkName));
         } catch (Exception e) {
-            LOGGER.warn("Не удалось создать симлинк {} -> {}: {}", link, linkName, e.getMessage());
+            LOGGER.warn("Could not create symlink {} -> {}: {}", link, linkName, e.getMessage());
         }
     }
 

@@ -33,7 +33,7 @@ public class LlamaEngine implements LlmEngine {
     public String generate(LlmRequest request, Path modelPath) {
         Path llamaCli = NativeConfig.AiModule.LLM.resolveExecutable();
         if (llamaCli == null || !Files.exists(modelPath)) {
-            throw new AiLibException(AiLibException.Reason.NOT_READY, "Бинарник или модель Llama не найдены");
+            throw new AiLibException(AiLibException.Reason.NOT_READY, "The llama binary or the model was not found");
         }
 
         boolean acquired;
@@ -41,10 +41,10 @@ public class LlamaEngine implements LlmEngine {
             acquired = AiLibExecutors.LLM_SLOT.tryAcquire(30, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new AiLibException(AiLibException.Reason.BUSY, "Ожидание очереди было прервано");
+            throw new AiLibException(AiLibException.Reason.BUSY, "Waiting in the queue was interrupted");
         }
         if (!acquired) {
-            throw new AiLibException(AiLibException.Reason.BUSY, "LLM занята другим запросом, попробуйте позже");
+            throw new AiLibException(AiLibException.Reason.BUSY, "The LLM is busy with another request, try again later");
         }
 
         try {
@@ -54,9 +54,9 @@ public class LlamaEngine implements LlmEngine {
             double temperature = request.temperature() != null ? request.temperature() : cfg.llmTemperature;
             PromptFormat format = request.format() != null ? request.format() : PromptFormat.LLAMA3;
 
-            LOGGER.debug("[LLM] Генерация ответа ({} симв. промпта, формат {})", request.prompt().length(), format);
+            LOGGER.debug("[LLM] Generating a reply ({} prompt chars, format {})", request.prompt().length(), format);
 
-            // Убираем маркер из пользовательского текста, чтобы он не мог подменить границу ответа.
+            // Strip the marker from user text so it cannot fake the answer boundary.
             String userPrompt = request.prompt().replace(RESPONSE_MARKER, "");
             String fullPrompt = format.build(system, userPrompt) + RESPONSE_MARKER;
 
@@ -91,7 +91,7 @@ public class LlamaEngine implements LlmEngine {
                         outputBuffer.append(line).append("\n");
                     }
                 } catch (Exception e) {
-                    LOGGER.error("Ошибка чтения потока llama-cli", e);
+                    LOGGER.error("Error reading llama-cli output", e);
                 }
             }, AiLibExecutors.PROCESS_IO_EXECUTOR);
 
@@ -99,13 +99,13 @@ public class LlamaEngine implements LlmEngine {
             if (!completed) {
                 ProcessUtil.killAndWait(process);
                 readTask.cancel(true);
-                throw new AiLibException(AiLibException.Reason.TIMEOUT, "Превышено время ожидания ответа LLM");
+                throw new AiLibException(AiLibException.Reason.TIMEOUT, "The LLM did not answer in time");
             }
 
             readTask.join();
             String cleanAnswer = extractAnswer(outputBuffer.toString());
             if (cleanAnswer.isEmpty()) {
-                throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "LLM завершилась без ответа");
+                throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "The LLM finished without an answer");
             }
             return cleanAnswer;
 
@@ -113,10 +113,10 @@ public class LlamaEngine implements LlmEngine {
             throw e;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Генерация прервана");
+            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Generation was interrupted");
         } catch (Exception e) {
             LOGGER.error("[LLM Exception]", e);
-            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Исключение LLM: " + e.getMessage());
+            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "LLM error: " + e.getMessage());
         } finally {
             AiLibExecutors.LLM_SLOT.release();
         }
@@ -124,10 +124,9 @@ public class LlamaEngine implements LlmEngine {
 
     static String extractAnswer(String rawOutput) {
         String clean = rawOutput.replaceAll("\u001B\\[[;\\d]*[ -/]*[@-~]", "").replace("\r", "");
+        // The marker is the last thing in the prompt, so the answer follows its LAST occurrence.
         int markerIdx = clean.lastIndexOf(RESPONSE_MARKER);
-        if (markerIdx < 0) return clean.trim();
-
-        String answer = clean.substring(markerIdx + RESPONSE_MARKER.length());
+        String answer = markerIdx < 0 ? clean : clean.substring(markerIdx + RESPONSE_MARKER.length());
         int cut = answer.length();
         for (String stop : PromptFormat.STOP_MARKERS) {
             int idx = answer.indexOf(stop);

@@ -12,15 +12,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Три пула с разным смыслом:
+ * Three pools with different purposes:
  * <ul>
- *   <li>{@link #DOWNLOAD_EXECUTOR} — параллельные скачивания (размер из конфига).</li>
- *   <li>{@link #PROCESS_IO_EXECUTOR} — ТОЛЬКО чтение stdout нативных процессов. Раньше туда же
- *       попадали тела команд, блокирующиеся на семафоре, и читатели голодали.</li>
- *   <li>{@link #CALL_EXECUTOR} — вызовы API/команд (async-методы AiLib, /ailib ...).
- *       Ограниченная очередь: при перегрузке задачи отклоняются, а не копятся бесконечно.</li>
+ *   <li>{@link #DOWNLOAD_EXECUTOR}: parallel downloads (size from the config).</li>
+ *   <li>{@link #PROCESS_IO_EXECUTOR}: ONLY for reading the stdout of native processes. Keeping
+ *       semaphore-blocked callers out of this pool prevents the readers from starving.</li>
+ *   <li>{@link #CALL_EXECUTOR}: API calls and commands (the async methods of AiLib, /ailib ...).
+ *       Bounded queue: under overload tasks are rejected instead of piling up forever.</li>
  * </ul>
- * Плюс по одному fair-слоту на нативный движок — вызовы одного движка идут по очереди.
+ * Plus one fair slot per native engine: calls to the same engine run one at a time.
  */
 public final class AiLibExecutors {
 

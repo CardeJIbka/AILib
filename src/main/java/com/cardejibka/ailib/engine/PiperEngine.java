@@ -33,10 +33,10 @@ public class PiperEngine implements TtsEngine {
     public byte[] synthesize(String text, Path voiceModelPath) {
         Path piperExe = NativeConfig.AiModule.TTS.resolveExecutable();
         if (piperExe == null) {
-            throw new AiLibException(AiLibException.Reason.NOT_READY, "Бинарник piper не найден");
+            throw new AiLibException(AiLibException.Reason.NOT_READY, "The piper binary was not found");
         }
         if (!Files.exists(voiceModelPath)) {
-            throw new AiLibException(AiLibException.Reason.NOT_READY, "Модель голоса не найдена: " + voiceModelPath);
+            throw new AiLibException(AiLibException.Reason.NOT_READY, "Voice model not found: " + voiceModelPath);
         }
 
         Path piperDir = piperExe.getParent();
@@ -50,10 +50,10 @@ public class PiperEngine implements TtsEngine {
             acquired = AiLibExecutors.TTS_SLOT.tryAcquire(30, TimeUnit.SECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new AiLibException(AiLibException.Reason.BUSY, "Ожидание очереди было прервано");
+            throw new AiLibException(AiLibException.Reason.BUSY, "Waiting in the queue was interrupted");
         }
         if (!acquired) {
-            throw new AiLibException(AiLibException.Reason.BUSY, "TTS занята другим запросом, попробуйте позже");
+            throw new AiLibException(AiLibException.Reason.BUSY, "TTS is busy with another request, try again later");
         }
 
         try {
@@ -98,21 +98,21 @@ public class PiperEngine implements TtsEngine {
                 writer.newLine();
                 writer.flush();
             } catch (IOException ignored) {
-                // Процесс мог упасть раньше — причину узнаем по коду выхода и stderr.
+                // The process may have died early; the exit code and stderr will tell why.
             }
 
             boolean finished = process.waitFor(AiLibConfig.get().ttsTimeoutSeconds, TimeUnit.SECONDS);
             if (!finished) {
-                // Сначала kill, потом join: иначе join ждёт процесс, который никто не убивает.
+                // Kill first, join second: otherwise join waits for a process nobody is killing.
                 ProcessUtil.killAndWait(process);
                 errThread.join(1000);
-                throw new AiLibException(AiLibException.Reason.TIMEOUT, "Piper завис");
+                throw new AiLibException(AiLibException.Reason.TIMEOUT, "Piper timed out");
             }
             errThread.join(2000);
 
             if (process.exitValue() != 0 || !Files.exists(outputFile)) {
                 throw new AiLibException(AiLibException.Reason.PROCESS_FAILED,
-                        "Piper завершился с кодом " + process.exitValue() + ": " + stderr);
+                        "Piper exited with code " + process.exitValue() + ": " + stderr);
             }
             return Files.readAllBytes(outputFile);
 
@@ -120,10 +120,10 @@ public class PiperEngine implements TtsEngine {
             throw e;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Синтез прерван");
+            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Synthesis was interrupted");
         } catch (Exception e) {
             LOGGER.error("[TTS Critical Error]", e);
-            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "Исключение TTS: " + e.getMessage());
+            throw new AiLibException(AiLibException.Reason.PROCESS_FAILED, "TTS error: " + e.getMessage());
         } finally {
             try {
                 Files.deleteIfExists(outputFile);

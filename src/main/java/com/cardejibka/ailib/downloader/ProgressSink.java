@@ -1,12 +1,12 @@
 package com.cardejibka.ailib.downloader;
 
 /**
- * Подписчик на прогресс скачивания. Реализуется как минимум логгером (всегда),
- * а на клиенте ещё и {@code DownloadTracker}, который прокидывает данные в HUD.
- * Специально не завязано на Minecraft/GuiGraphics — этот интерфейс живёт в common-коде.
+ * Subscriber to download progress. Implemented at least by the logger (always) and, on the client,
+ * by {@code DownloadTracker}, which feeds the HUD. Deliberately free of Minecraft/GuiGraphics
+ * references: this interface lives in common code.
  */
 public interface ProgressSink {
-    /** total == -1, если сервер не прислал Content-Length (индикатор "неизвестно сколько"). */
+    /** total == -1 if the server sent no Content-Length (the "unknown size" indicator). */
     void onProgress(String taskId, String label, long downloaded, long total);
 
     default void onFinished(String taskId, boolean success) {

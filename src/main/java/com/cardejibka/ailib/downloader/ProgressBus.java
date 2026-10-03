@@ -4,23 +4,22 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Простая шина событий прогресса. Common-код (AiLibBootstrap) публикует сюда,
- * не зная, есть ли вообще клиент/HUD — это позволяет одному и тому же коду
- * работать и на dedicated-сервере (просто логи), и на клиенте (HUD поверх логов).
+ * Simple progress event bus. Common code (AiLibBootstrap) publishes here without knowing whether a
+ * client/HUD exists at all, so the same code works on a dedicated server (log lines only) and on
+ * the client (HUD on top of the log).
  */
 public final class ProgressBus {
     private static final Logger LOGGER = LoggerFactory.getLogger("AiLib-Progress");
     private static final List<ProgressSink> SINKS = new CopyOnWriteArrayList<>();
 
-    // Чтобы не спамить лог на каждый прочитанный чанк — логируем только каждые ~10%.
+    // Avoid spamming the log for every chunk: log roughly every 10%.
     private static final Map<String, Integer> LAST_LOGGED_PERCENT = new ConcurrentHashMap<>();
-    // Последний известный процент по каждому таску — чтобы AiLib мог сразу
-    // сказать вызывающему коду "готово на 42%", а не просто "ещё не готово".
+    // Latest known percentage per task, so AiLib can tell callers "42% done" instead of just "not ready".
     private static final Map<String, Integer> LATEST_PERCENT = new ConcurrentHashMap<>();
 
     private ProgressBus() {
@@ -48,12 +47,12 @@ public final class ProgressBus {
             try {
                 sink.onProgress(taskId, label, downloaded, total);
             } catch (Exception e) {
-                LOGGER.error("Ошибка в подписчике прогресса", e);
+                LOGGER.error("Error in a progress subscriber", e);
             }
         }
     }
 
-    /** -1, если по этому таску ещё не было ни одного события прогресса. */
+    /** -1 if no progress event has been published for this task yet. */
     public static int getLastPercent(String taskId) {
         return LATEST_PERCENT.getOrDefault(taskId, -1);
     }
@@ -61,12 +60,12 @@ public final class ProgressBus {
     public static void publishFinished(String taskId, String label, boolean success) {
         LAST_LOGGED_PERCENT.remove(taskId);
         LATEST_PERCENT.remove(taskId);
-        LOGGER.info("[{}] {}", label, success ? "готово" : "ошибка");
+        LOGGER.info("[{}] {}", label, success ? "done" : "failed");
         for (ProgressSink sink : SINKS) {
             try {
                 sink.onFinished(taskId, success);
             } catch (Exception e) {
-                LOGGER.error("Ошибка в подписчике прогресса", e);
+                LOGGER.error("Error in a progress subscriber", e);
             }
         }
     }

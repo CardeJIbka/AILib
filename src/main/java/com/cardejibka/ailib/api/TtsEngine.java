@@ -5,6 +5,6 @@ import java.nio.file.Path;
 public interface TtsEngine {
     boolean isNativeReady();
 
-    /** @param voiceModelPath путь к .onnx-модели голоса; конфиг (.onnx.json) ищется рядом с тем же именем + ".json" */
+    /** @param voiceModelPath path to the .onnx voice; its config (.onnx.json) is expected next to it */
     byte[] synthesize(String text, Path voiceModelPath);
 }

@@ -3,15 +3,16 @@ package com.cardejibka.ailib.api;
 import java.nio.file.Path;
 
 /**
- * Реализуется движком (по умолчанию — LlamaEngine на llama.cpp). Подменить можно
- * через {@link AiLib#setLlmEngine(LlmEngine)}.
+ * Implemented by an LLM backend (default: LlamaEngine on top of llama.cpp).
+ * Replace it with {@link AiLib#setLlmEngine(LlmEngine)}.
  */
 public interface LlmEngine {
+    /** Whether the backend's own runtime is usable. For custom engines AiLib relies on this instead of its built-in natives. */
     boolean isNativeReady();
 
     /**
-     * @param request   промпт и параметры; request.format() уже заполнен вызывающей стороной
-     * @param modelPath путь к файлу весов, уже гарантированно скачанному
+     * @param request   prompt and parameters; {@code request.format()} is already resolved by the caller
+     * @param modelPath path to the weights file, guaranteed to be downloaded already
      */
     String generate(LlmRequest request, Path modelPath);
 

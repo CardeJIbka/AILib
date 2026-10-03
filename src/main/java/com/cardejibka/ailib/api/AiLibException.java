@@ -3,24 +3,24 @@ package com.cardejibka.ailib.api;
 public class AiLibException extends RuntimeException {
 
     public enum Reason {
-        /** Натив или модель ещё не готовы (идёт/не начиналась загрузка). */
+        /** The native binary or the model is not ready yet (download in progress or not started). */
         NOT_READY,
-        /** Скачивание не удалось (сеть, HTTP-ошибка, несовпадение sha256). */
+        /** A download failed (network, HTTP error, sha256 mismatch). */
         DOWNLOAD_FAILED,
-        /** Процесс (llama-cli/piper/whisper-cli) не уложился в таймаут. */
+        /** The process (llama-cli/piper/whisper-cli) exceeded its timeout. */
         TIMEOUT,
-        /** Процесс завершился с ошибкой или дал пустой/битый вывод. */
+        /** The process exited with an error or produced empty/garbage output. */
         PROCESS_FAILED,
-        /** Вызов требует клиентское окружение (микрофон/динамики), а его нет. */
+        /** The call needs a client environment (microphone/speakers) that is not available. */
         CLIENT_ONLY,
-        /** Слот занят другим запросом дольше, чем разрешено ждать. */
+        /** The engine slot has been busy with another request for longer than we are willing to wait. */
         BUSY,
-        /** Для этой ОС/архитектуры нет нативного бинарника. */
+        /** There is no prebuilt native binary for this OS/architecture. */
         UNSUPPORTED_PLATFORM
     }
 
     private final Reason reason;
-    /** Только для NOT_READY: 0..100, либо -1, если прогресс неизвестен. */
+    /** NOT_READY only: 0..100, or -1 if the progress is unknown. */
     private final int progressPercent;
 
     public AiLibException(Reason reason, String message) {
