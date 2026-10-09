@@ -23,19 +23,27 @@ public final class AiLibConfig {
     private static volatile AiLibConfig instance;
 
     // --- General ---
-    /** false = download nothing at startup; everything is fetched lazily on the first API call. */
-    public boolean bootstrapDefaults = true;
+    /**
+     * true = download the default natives and models at startup (about 1 GB in total).
+     * false (default) = download nothing at startup; each component is fetched lazily on the first
+     * API call that needs it, so players and servers only pay for what is actually used.
+     */
+    public boolean bootstrapDefaults = false;
     /** Permission level required for /ailib commands (default 2 = operators). */
     public int commandPermissionLevel = 2;
 
     // --- LLM ---
-    public String llmSystemPrompt = "Ты полезный ассистент. Отвечай кратко и чётко.";
+    public String llmSystemPrompt = "You are a helpful assistant. Answer briefly and clearly.";
     public int llmMaxTokens = 128;
     public int llmContextSize = 2048;
     public double llmTemperature = 0.6;
     public int llmTimeoutSeconds = 35;
-    /** Extra llama-cli arguments, e.g. ["-no-cnv"] for builds that default to conversation mode. */
-    public List<String> llmExtraArgs = List.of();
+    /**
+     * Extra llama-cli arguments. AiLib builds the chat template itself, so llama-cli's own
+     * conversation mode must be off: recent llama.cpp builds enable it by default for models that ship
+     * a chat template. Set to [] if your llama.cpp build does not know this flag.
+     */
+    public List<String> llmExtraArgs = List.of("-no-cnv");
 
     // --- TTS ---
     public int ttsTimeoutSeconds = 15;
@@ -113,7 +121,7 @@ public final class AiLibConfig {
         if (llmSystemPrompt == null) llmSystemPrompt = d.llmSystemPrompt;
         if (sttLanguage == null || sttLanguage.isBlank()) sttLanguage = d.sttLanguage;
         if (allowedModelDownloadDomains == null) allowedModelDownloadDomains = d.allowedModelDownloadDomains;
-        if (llmExtraArgs == null) llmExtraArgs = List.of();
+        if (llmExtraArgs == null) llmExtraArgs = d.llmExtraArgs;
         llmMaxTokens = Math.max(1, llmMaxTokens);
         llmContextSize = Math.max(128, llmContextSize);
         if (Double.isNaN(llmTemperature) || llmTemperature < 0) llmTemperature = d.llmTemperature;

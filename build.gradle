@@ -3,10 +3,60 @@ plugins {
 	id 'maven-publish'
 }
 
+// ---------------------------------------------------------------------------
+// Versioning and file naming
+//
+//   gradle.properties:  version=0.1.32-alpha   (MAJOR.MINOR.PATCH, optional -beta / -alpha)
+//
+//   The build splits it into:
+//     modVersion  0.1.32  plain SemVer. This goes INTO the jar (fabric.mod.json), the Maven coordinates
+//                         and the "version number" field on Modrinth/CurseForge.
+//     channel     alpha   only decorates the FILE NAME; pick the same channel in the upload form.
+//   It is NOT kept in the mod version on purpose: in SemVer "0.1.32-alpha" sorts BELOW "0.1.32", which
+//   would make dependency ranges such as ">=0.1.32" reject your own alpha builds.
+//
+//   Result: ailib-<mc>-fabric-<modVersion>[-<channel>].jar
+//   e.g.    ailib-1.21-fabric-0.1.32-alpha.jar   (a plain 0.1.32 gets no suffix)
+// ---------------------------------------------------------------------------
+
+def requireProp(String name) {
+	def v = project.findProperty(name)
+	if (v == null || v.toString().isBlank()) {
+		throw new GradleException("gradle.properties is missing '${name}'")
+	}
+	return v.toString()
+}
+
+def rawVersion = requireProp("version")
+def versionMatcher = (rawVersion =~ /^(\d+\.\d+\.\d+)(?:-(alpha|beta))?$/)
+if (!versionMatcher.matches()) {
+	throw new GradleException("version in gradle.properties must look like 0.1.32, 0.1.32-beta or "
+			+ "0.1.32-alpha. Got: '${rawVersion}'")
+}
+def modVersion = versionMatcher.group(1)
+def releaseChannel = versionMatcher.group(2) ?: "release"
+
+def mcLabel = (project.findProperty("mc_label") ?: requireProp("minecraft_version")).toString()
+def baseName = (project.findProperty("archives_base_name") ?: "ailib").toString()
+def fileVersion = releaseChannel == "release" ? modVersion : "${modVersion}-${releaseChannel}".toString()
+def archiveBase = "${baseName}-${mcLabel}-fabric".toString()
+
+// `group` is taken from gradle.properties as is. Only the version is normalised.
+version = modVersion
+
+base {
+	archivesName = archiveBase
+}
+
+// Every jar task (dev jar, remapped jar, sources jars) gets the channel suffix in its file name.
+// project.version stays a clean SemVer, so fabric.mod.json and Maven are not affected.
+tasks.withType(Jar).configureEach {
+	archiveVersion = fileVersion
+}
+
 repositories {
-	// Loom сам добавляет репозитории Minecraft/Fabric — этот блок нужен только
-	// для СВОИХ дополнительных зависимостей (например, если понадобится JNA,
-	// commons-compress и т.п. — см. пример ниже).
+	// Loom adds the Minecraft/Fabric repositories itself. This block is only for your own extra
+	// dependencies (e.g. JNA for Vosk, see the comment below).
 	mavenCentral()
 }
 
@@ -22,38 +72,59 @@ loom {
 }
 
 dependencies {
-	// Версии смотри в gradle.properties.
+	// Versions live in gradle.properties.
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	mappings loom.officialMojangMappings()
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
-	// Fabric API. Технически опционально, но почти всегда нужно.
+	// Fabric API (HudRenderCallback, command API).
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-	// Юнит-тесты на чистую логику (валидация ModelSpec, allow-list доменов и т.п.) —
-	// намеренно НЕ трогают Minecraft/Fabric, поэтому обычный JUnit 5, без loom-специфики.
+	// Unit tests cover pure logic (ModelSpec validation, domain allow-list, prompt formats, answer
+	// parsing). They deliberately do not touch Minecraft, so plain JUnit 5 is enough.
 	testImplementation platform("org.junit:junit-bom:5.10.2")
 	testImplementation "org.junit.jupiter:junit-jupiter"
+	// Required explicitly on Gradle 9+, otherwise tests may fail to start.
+	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 
-	// JNA нигде в текущем коде не используется (все нативные бинарники запускаются
-	// через ProcessBuilder, а не через прямые нативные вызовы) — поэтому убрана.
-	// Если понадобится (например, для перечисления аудио-устройств или глобальных
-	// хоткеев), подключай её ЧЕРЕЗ `include`, а не `implementation`/`modImplementation`,
-	// иначе она не попадёт в финальный jar и у игроков будет ClassNotFoundException:
+	// JNA is not used by the current code (all natives run through ProcessBuilder). If you add it
+	// later (e.g. for Vosk) you need BOTH lines, otherwise it is missing from the final jar:
 	//
+	// implementation "net.java.dev.jna:jna:5.14.0"
 	// include "net.java.dev.jna:jna:5.14.0"
 }
 
 test {
 	useJUnitPlatform()
+
+	// Explicit wiring: with some Loom/Gradle 9 setups the test classes end up off the test worker's
+	// classpath, which shows up as "ClassNotFoundException: <the test class itself>".
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+
+	// Print why a test failed instead of just "Test process encountered an unexpected problem".
+	testLogging {
+		events "failed"
+		exceptionFormat "full"
+	}
 }
 
+// Values substituted into fabric.mod.json. A placeholder without a value here fails the build loudly.
+def modJsonProps = [
+		version              : version.toString(),
+		// Minimum Fabric Loader. Defaults to the loader you build with; lower it after testing on an older one.
+		loader_dependency    : (project.findProperty("loader_dependency") ?: (">=" + requireProp("loader_version"))).toString(),
+		// Declare only what you actually tested. Defaults to the exact build version if not set.
+		minecraft_dependency : (project.findProperty("minecraft_dependency") ?: requireProp("minecraft_version")).toString(),
+		// ">=" + the Fabric API version you build against (without the "+mc" part).
+		fabric_api_dependency: (">=" + requireProp("fabric_api_version").split("\\+")[0]).toString(),
+]
+
 processResources {
-	def version = project.version
-	inputs.property "version", version
+	inputs.properties modJsonProps
 
 	filesMatching("fabric.mod.json") {
-		expand "version": version
+		expand modJsonProps
 	}
 }
 
@@ -63,7 +134,7 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 java {
-	// Loom автоматически прикрепит sourcesJar к RemapSourcesJar и к таску "build".
+	// Loom attaches sourcesJar to remapSourcesJar and to the "build" task.
 	withSourcesJar()
 
 	sourceCompatibility = JavaVersion.VERSION_21
@@ -77,23 +148,68 @@ jar {
 	from("LICENSE") {
 		rename { "${it}_$projectName" }
 	}
-	// Лицензии сторонних компонентов (llama.cpp / whisper.cpp / piper / модели),
-	// которые библиотека скачивает в рантайме, НЕ входят в jar — они не
-	// распространяются вместе с модом, а тянутся отдельно на машине игрока.
-	// См. THIRD_PARTY_NOTICES.md в корне репозитория.
+	// Licenses of the third-party components the library downloads at runtime (llama.cpp / whisper.cpp /
+	// piper / models) are NOT part of the jar: they are not distributed with the mod, they are fetched
+	// separately on the player's machine. See THIRD_PARTY_NOTICES.md in the repository root.
 }
 
-// Настройка Maven-публикации — заполни repositories, когда решишь, куда публиковать
-// артефакт (например, свой Maven-репозиторий или Modrinth/CurseForge через отдельный плагин).
+// Sanity check before you upload anything: the built jar must carry a clean SemVer version and
+// no unresolved ${placeholders} (the two classic mistakes: "unspecified" and a literal "${version}").
+tasks.register("verifyRelease") {
+	group = "verification"
+	description = "Checks the remapped jar: SemVer version, no unresolved placeholders."
+	dependsOn tasks.named("remapJar")
+
+	def jarFile = tasks.named("remapJar").flatMap { it.archiveFile }
+	def expectedVersion = modVersion
+
+	doLast {
+		def file = jarFile.get().asFile
+		String text
+		new java.util.zip.ZipFile(file).withCloseable { zip ->
+			def entry = zip.getEntry("fabric.mod.json")
+			if (entry == null) throw new GradleException("fabric.mod.json is missing in ${file.name}")
+			text = zip.getInputStream(entry).getText("UTF-8")
+		}
+		if (text.contains('${')) {
+			throw new GradleException("Unresolved placeholder in fabric.mod.json inside ${file.name}")
+		}
+		def json = new groovy.json.JsonSlurper().parseText(text)
+		if (json.version != expectedVersion) {
+			throw new GradleException("fabric.mod.json version is '${json.version}', expected '${expectedVersion}'")
+		}
+		logger.lifecycle("verifyRelease OK: ${file.name} (mod version ${json.version}, minecraft ${json.depends.minecraft})")
+	}
+}
+
+tasks.named("build") {
+	dependsOn tasks.named("verifyRelease")
+}
+
+// Maven publication. Nothing to configure for Modrinth: it serves every project on its own Maven
+// (maven.modrinth:<slug>:<version number>). Use `./gradlew publishToMavenLocal` to test the pom locally.
 publishing {
 	publications {
 		create("mavenJava", MavenPublication) {
 			from components.java
+			artifactId = baseName
+
+			pom {
+				name = "AI Lib"
+				description = "Local LLM, TTS and STT for Fabric mods."
+				url = "https://github.com/cardejibka/ailib"
+				licenses {
+					license {
+						name = "MIT License"
+						url = "https://opensource.org/licenses/MIT"
+					}
+				}
+			}
 		}
 	}
 
 	repositories {
-		// Например:
+		// Add your own Maven repository here if you ever want one, for example:
 		// maven {
 		//     name = "MyRepo"
 		//     url = uri("https://maven.example.com/releases")

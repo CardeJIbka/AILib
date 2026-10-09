@@ -20,7 +20,8 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Public entry point of the library (early alpha: the API may still change before 1.0).
  * <pre>{@code
- * // Default model: nothing to register, it is downloaded on first use.
+ * // Default model: nothing to register. The first call starts the download and throws NOT_READY
+ * // until it finishes, so catch AiLibException and retry later.
  * String answer = AiLib.generate("Hello!");
  *
  * // Your own model with a different chat template:
@@ -40,13 +41,17 @@ public final class AiLib {
             "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
             "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf");
 
-    /** Piper voice: the .onnx.json is a companion file, so the voice is ready only when both files exist. */
+    /**
+     * Default English Piper voice (MIT-licensed repository, public-domain LJ Speech dataset: see the voice's
+     * MODEL_CARD). The .onnx.json is a companion file, so the voice is ready only when both files exist.
+     * For other languages register your own voice with {@link #register(ModelSpec)}.
+     */
     public static final ModelSpec DEFAULT_TTS_VOICE = new ModelSpec(
-            "ailib:piper-ru-dmitri-medium", EngineType.TTS,
-            "ru_RU-dmitri-medium.onnx",
-            "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx")
-            .withCompanions(new ModelFile("ru_RU-dmitri-medium.onnx.json",
-                    "https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx.json"));
+            "ailib:piper-en-ljspeech-medium", EngineType.TTS,
+            "en_US-ljspeech-medium.onnx",
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx")
+            .withCompanions(new ModelFile("en_US-ljspeech-medium.onnx.json",
+                    "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json"));
 
     public static final ModelSpec DEFAULT_STT_MODEL = new ModelSpec(
             "ailib:whisper-tiny", EngineType.STT,
@@ -75,8 +80,9 @@ public final class AiLib {
     // ---------- Downloads and model management ----------
 
     /**
-     * Called from AiLibMain.onInitialize(). With bootstrapDefaults=false in the config nothing is
-     * downloaded here: everything is fetched lazily on the first API call. Modules whose engine was
+     * Called from AiLibMain.onInitialize(). Only does anything with bootstrapDefaults=true in the config
+     * (the default is false): otherwise nothing is downloaded here and everything is fetched lazily on
+     * the first API call that needs it. Modules whose engine was
      * replaced, or that have no prebuilt binary for this platform, are skipped.
      */
     public static void bootstrapDefaults() {
@@ -250,7 +256,10 @@ public final class AiLib {
 
         // A model we have not seen yet is registered automatically.
         ModelHandle handle = AiLibBootstrap.getModel(spec.id());
-        if (handle == null) handle = AiLibBootstrap.register(spec);
+        if (handle == null) {
+            LOGGER.info("First use of model '{}': downloading it in the background ({})", spec.id(), spec.fileName());
+            handle = AiLibBootstrap.register(spec);
+        }
 
         if (handle.state() == ModelHandle.State.FAILED) {
             throw new AiLibException(AiLibException.Reason.DOWNLOAD_FAILED,

@@ -2,9 +2,10 @@
 
 A **Fabric** library that gives mods a local, offline AI toolbox: an LLM ([llama.cpp](https://github.com/ggml-org/llama.cpp)),
 text-to-speech ([Piper](https://github.com/rhasspy/piper)) and speech-to-text ([whisper.cpp](https://github.com/ggml-org/whisper.cpp)).
-It downloads the native binaries and models by itself in the background and exposes a small, thread-safe Java API.
+It downloads the native binaries and models by itself in the background, **only when something actually needs them**,
+and exposes a small, thread-safe Java API. After the one-time download everything runs on the player's machine: no cloud, no accounts.
 
-> **Status: early alpha (0.1.0).** The API may change before 1.0. Download, verification and extraction paths are
+> **Status: early alpha (0.1.x).** The API may change before 1.0. Download, verification and extraction paths are
 > checked; end-to-end behaviour still needs more testing on every platform.
 
 ## Supported platforms
@@ -17,11 +18,41 @@ It downloads the native binaries and models by itself in the background and expo
 
 \* whisper.cpp publishes no prebuilt Linux/macOS binaries. Plug in your own engine with `AiLib.setSttEngine(...)`.
 
-Minecraft `1.21.2` – `1.21.5`, Java 21+, Fabric API.
+Minecraft `1.21` (the exact versions each release supports are listed on its Modrinth page), Java 21+, Fabric API.
+
+## What gets downloaded, and when
+
+**Nothing is downloaded at startup by default.** A component is fetched the first time a mod calls the API that needs it
+(the call throws `AiLibException` with reason `NOT_READY` and a progress percentage until the download finishes).
+Set `bootstrapDefaults` to `true` in the config to download all defaults at startup instead.
+
+| Component | Source | Approx. size |
+|-----------|--------|--------------|
+| llama.cpp, Piper, whisper.cpp binaries | official GitHub releases, pinned by sha256 | tens of MB each |
+| Default LLM: Llama 3.2 1B Instruct (Q4_K_M) | Hugging Face (bartowski GGUF) | ~0.8 GB |
+| Default voice: Piper `en_US-ljspeech-medium` | Hugging Face (rhasspy/piper-voices) | ~64 MB |
+| Default STT model: whisper `ggml-tiny` | Hugging Face (ggerganov/whisper.cpp) | ~75 MB |
+
+Files go to `ai_natives/` and `ai_models/` inside the game directory. The only network connections AiLib makes are these
+downloads (GitHub, Hugging Face and the CDNs they redirect to). There is no telemetry, and prompts, audio and replies never leave the machine.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the licenses of everything that is downloaded.
 
 ## Quick start for mod authors
 
-Declare the dependency in your `fabric.mod.json` (and depend on / jar-in-jar the library in Gradle):
+Add the dependency in Gradle (Modrinth Maven) and declare it in your `fabric.mod.json`:
+
+```groovy
+repositories {
+    exclusiveContent {
+        forRepository { maven { name = "Modrinth"; url = "https://api.modrinth.com/maven" } }
+        filter { includeGroup "maven.modrinth" }
+    }
+}
+dependencies {
+    modImplementation "maven.modrinth:ailib:<version>"
+    include "maven.modrinth:ailib:<version>"   // optional: jar-in-jar
+}
+```
 
 ```json
 "depends": { "ailib": ">=0.1.0" }
@@ -32,6 +63,7 @@ Declare the dependency in your `fabric.mod.json` (and depend on / jar-in-jar the
 
 ```java
 // Run these off the main thread, or use the *Async variants.
+// The first call may throw NOT_READY while the model downloads: catch AiLibException and try again later.
 String reply = AiLib.generate("Greet the player in one sentence.");
 
 AiLib.generateAsync(LlmRequest.builder("Describe this village")
@@ -59,12 +91,15 @@ handle.retry();          // after FAILED
 handle.future();         // CompletableFuture<Boolean>
 ```
 
-A voice with several files:
+A voice with several files, e.g. a voice for another language:
 
 ```java
-ModelSpec voice = new ModelSpec("mymod:voice", EngineType.TTS, "en_US-amy-medium.onnx", "https://.../en_US-amy-medium.onnx")
-        .withCompanions(new ModelFile("en_US-amy-medium.onnx.json", "https://.../en_US-amy-medium.onnx.json"));
+ModelSpec voice = new ModelSpec("mymod:voice", EngineType.TTS, "ru_RU-dmitri-medium.onnx", "https://.../ru_RU-dmitri-medium.onnx")
+        .withCompanions(new ModelFile("ru_RU-dmitri-medium.onnx.json", "https://.../ru_RU-dmitri-medium.onnx.json"));
+AiLib.synthesize("Привет!", voice);
 ```
+
+Check the license of every model you ship or register: it is your responsibility, not AiLib's.
 
 Calls throw `AiLibException` with a `Reason` (`NOT_READY` carries `getProgressPercent()`, `BUSY`, `TIMEOUT`, `UNSUPPORTED_PLATFORM`, ...).
 Handle them: a model may simply not be downloaded yet.
@@ -74,7 +109,6 @@ Handle them: a model may simply not be downloaded yet.
 Implement `LlmEngine` / `TtsEngine` / `SttEngine` and call `AiLib.setXxxEngine(...)` during your mod initialization.
 A custom engine owns its runtime: AiLib asks `engine.isNativeReady()` instead of downloading its built-in natives.
 Models are still described by `ModelSpec` (single files, optionally with companions). Archives/directories are not supported yet.
-Set `bootstrapDefaults` to `false` in the config if your pack replaces engines, so the default downloads are skipped.
 
 ### Progress for your own HUD
 
@@ -91,17 +125,17 @@ AiLib.subscribeProgress(new ProgressSink() {
 - Two models may share a file only if file name, url **and** sha256 are identical; otherwise the second registration fails with `FILENAME_COLLISION`.
 - Each engine handles one request at a time. Other callers wait up to 30 s and then get `BUSY`.
 - Model downloads are limited to hosts in `allowedModelDownloadDomains` (see below). Add a domain there for models hosted elsewhere.
-- Defaults (about 1 GB: Llama 3.2 1B, a Piper voice, Whisper tiny) are downloaded at startup. Set `bootstrapDefaults: false` to download lazily instead.
+- To pre-download everything (for example in a modpack that ships with voice features), set `bootstrapDefaults: true`.
 
 ## Configuration (`config/ailib.json`)
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `bootstrapDefaults` | `true` | Download default natives/models at startup (otherwise on first use). |
+| `bootstrapDefaults` | `false` | `true` = download the default natives/models at startup; `false` = on first use. |
 | `commandPermissionLevel` | `2` | Permission level for `/ailib` commands. |
-| `llmSystemPrompt` | Russian assistant prompt | Default system prompt (overridable per call). |
+| `llmSystemPrompt` | `You are a helpful assistant. Answer briefly and clearly.` | Default system prompt (overridable per call). |
 | `llmMaxTokens`, `llmContextSize`, `llmTemperature`, `llmTimeoutSeconds` | `128`, `2048`, `0.6`, `35` | LLM defaults. |
-| `llmExtraArgs` | `[]` | Extra `llama-cli` arguments, e.g. `["-no-cnv"]` if your llama.cpp build starts in conversation mode. |
+| `llmExtraArgs` | `["-no-cnv"]` | Extra `llama-cli` arguments. `-no-cnv` turns off llama-cli's own conversation mode (AiLib applies the chat template itself); set `[]` if your llama.cpp build does not know it. |
 | `ttsTimeoutSeconds` | `15` | TTS timeout. |
 | `sttLanguage`, `sttThreads`, `sttTimeoutSeconds` | `auto`, `2`, `30` | STT settings. |
 | `maxParallelDownloads` | `3` | Parallel download threads. |
@@ -132,4 +166,4 @@ Operators only by default.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Downloaded third-party components have their own licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

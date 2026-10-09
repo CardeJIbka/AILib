@@ -1,39 +1,40 @@
-# Уведомление о сторонних компонентах
+# Notice of Third-Party Components
 
-Лицензия в файле `LICENSE` (CC0-1.0) относится только к коду этой библиотеки.
-AiLib во время работы **скачивает и запускает** сторонние бинарники и модели,
-которые распространяются на собственных условиях. Ниже — что именно и на каких.
+The license in the `LICENSE` file (MIT) applies only to the code of this library.
+AiLib **downloads and runs** third-party binaries and models on the player's machine at runtime
+(on first use, or at startup if `bootstrapDefaults` is enabled). They are not part of the AiLib jar and are distributed under their own terms.
+Below is what exactly and under which terms.
 
-## Нативные бинарники
+## Native binaries
 
-| Компонент | Лицензия | Ссылка |
-|---|---|---|
-| [llama.cpp](https://github.com/ggml-org/llama.cpp) | MIT | https://github.com/ggml-org/llama.cpp/blob/master/LICENSE |
-| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | MIT | https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE |
-| [piper](https://github.com/rhasspy/piper) | MIT | https://github.com/rhasspy/piper/blob/master/LICENSE.md |
+| Component                                              | License | Link                                                        |
+| ------------------------------------------------------ | ------- | ----------------------------------------------------------- |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp)     | MIT     | https://github.com/ggml-org/llama.cpp/blob/master/LICENSE   |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | MIT     | https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE |
+| [piper](https://github.com/rhasspy/piper)              | MIT     | https://github.com/rhasspy/piper/blob/master/LICENSE.md     |
 
-Обременений для конечного пользователя эти три компонента не накладывают —
-свободное использование, изменение, распространение.
+The binaries come from the projects' official GitHub releases and are verified against sha256 values pinned in AiLib.
 
-## Модели по умолчанию
+## Default models
 
-| Модель | Лицензия | Что это значит на практике |
-|---|---|---|
-| [Llama-3.2-1B-Instruct](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct) (веса в GGUF от bartowski) | **Llama 3.2 Community License** (не MIT/CC0) | Требует атрибуцию ("Built with Llama") при распространении производных продуктов и накладывает [Acceptable Use Policy](https://www.llama.com/llama3_2/use-policy/) — ограничения на ряд сценариев использования. Прочитай полный текст лицензии на странице модели, прежде чем встраивать её в коммерческий или публичный проект. |
-| [ggml-tiny (Whisper)](https://huggingface.co/ggerganov/whisper.cpp) | MIT | Без ограничений. |
-| [Piper voices (ru_RU-dmitri-medium)](https://huggingface.co/rhasspy/piper-voices) | MIT | Без ограничений. |
+| Model | License | What this means in practice |
+| ----- | ------- | --------------------------- |
+| [Llama-3.2-1B-Instruct](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct) (GGUF weights from bartowski) | **Llama 3.2 Community License** (not MIT/CC0) | Requires attribution ("Built with Llama") when distributing derivative products and imposes an [Acceptable Use Policy](https://www.llama.com/llama3_2/use-policy/): restrictions on a number of usage scenarios. Read the full license text on the model page before embedding it in a commercial or public project. |
+| [ggml-tiny (Whisper)](https://huggingface.co/ggerganov/whisper.cpp) | MIT | No restrictions. |
+| [Piper voice en_US-ljspeech-medium](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ljspeech/medium) | MIT (the piper-voices repository license); see the voice's `MODEL_CARD` for the training dataset | Check the `MODEL_CARD` of any voice you ship: voices differ in their dataset terms. |
 
-## Модели, зарегистрированные сторонними модами
+## Models registered by third-party mods
 
-Если другой мод регистрирует свою модель через `AiLib.registerModel(...)`,
-**ответственность за лицензию этой модели лежит на разработчике того мода**,
-а не на AiLib. Библиотека применяет только allow-list доменов
-(`config/ailib.json` -> `allowedModelDownloadDomains`) как техническую меру
-против скачивания с произвольных источников — это не проверка лицензии.
+If another mod registers its model via `AiLib.register(...)`,
+**responsibility for that model's license lies with the developer of that mod**,
+not with AiLib. The library only applies an allow-list of domains
+(`config/ailib.json` -> `allowedModelDownloadDomains`) as a technical measure
+against downloading from arbitrary sources. This is not a license check.
 
-## Что стоит сделать автору мода, использующего AiLib
+## What a mod author using AiLib should do
 
-Если ты собираешь мод на основе AiLib и распространяешь его публично (Modrinth,
-CurseForge и т.п.) с моделью Llama-3.2 по умолчанию — упомяни в описании мода
-фразу вида "Built with Llama" и дай ссылку на Acceptable Use Policy, как того
-требует лицензия модели. Это требование самой модели, не AiLib.
+If you are building a mod based on AiLib and distributing it publicly (Modrinth,
+CurseForge, etc.) while it uses the default Llama 3.2 model, mention in the mod description
+a phrase like "Built with Llama" and provide a link to the Acceptable Use Policy, as required
+by the model's license. This is a requirement of the model itself, not of AiLib.
+If you register your own models, check their licenses the same way.
