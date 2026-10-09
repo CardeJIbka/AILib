@@ -1,6 +1,6 @@
 # AI Lib
 
-A **Fabric** library that gives mods a local, offline AI toolbox: an LLM ([llama.cpp](https://github.com/ggml-org/llama.cpp)),
+A Minecraft library that gives mods a local, offline AI toolbox: an LLM ([llama.cpp](https://github.com/ggml-org/llama.cpp)),
 text-to-speech ([Piper](https://github.com/rhasspy/piper)) and speech-to-text ([whisper.cpp](https://github.com/ggml-org/whisper.cpp)).
 It downloads the native binaries and models by itself in the background, **only when something actually needs them**,
 and exposes a small, thread-safe Java API. After the one-time download everything runs on the player's machine: no cloud, no accounts.

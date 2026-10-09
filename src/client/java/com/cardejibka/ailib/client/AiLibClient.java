@@ -13,12 +13,8 @@ public class AiLibClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        // DownloadTracker knows nothing about AiLibBootstrap: it is just a ProgressBus subscriber,
-        // so another mod can add or replace it with its own HUD just as easily.
         ProgressBus.subscribe(new DownloadTracker());
 
-        // The HudRenderCallback signature here is (GuiGraphics, DeltaTracker), which is what 1.21.2+ uses.
-        // On 1.21/1.21.1 the second parameter is a float partialTick and LoadingOverlay.render must change back.
         HudRenderCallback.EVENT.register(LoadingOverlay::render);
     }
 }

@@ -72,7 +72,7 @@ public final class NativeInstaller {
         }
     }
 
-    /** Minimal dependency-free tar extractor: ustar + GNU long names + pax path + symlinks/hardlinks. */
+    // Minimal dependency-free tar extractor: ustar + GNU long names + pax path + symlinks/hardlinks.
     private static void extractTarGz(Path tarGzFile, Path root, boolean stripRootFolder) throws Exception {
         try (InputStream fis = Files.newInputStream(tarGzFile);
              GZIPInputStream gis = new GZIPInputStream(fis)) {

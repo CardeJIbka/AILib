@@ -7,7 +7,7 @@ import java.nio.file.Path;
  * Replace it with {@link AiLib#setLlmEngine(LlmEngine)}.
  */
 public interface LlmEngine {
-    /** Whether the backend's own runtime is usable. For custom engines AiLib relies on this instead of its built-in natives. */
+    // Whether the backend's own runtime is usable. For custom engines AiLib relies on this instead of its built-in natives
     boolean isNativeReady();
 
     /**

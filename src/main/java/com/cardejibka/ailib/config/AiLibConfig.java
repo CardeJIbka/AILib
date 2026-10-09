@@ -22,18 +22,18 @@ public final class AiLibConfig {
 
     private static volatile AiLibConfig instance;
 
-    // --- General ---
+    // General
     /**
      * true = download the default natives and models at startup (about 1 GB in total).
      * false (default) = download nothing at startup; each component is fetched lazily on the first
      * API call that needs it, so players and servers only pay for what is actually used.
      */
     public boolean bootstrapDefaults = false;
-    /** Permission level required for /ailib commands (default 2 = operators). */
+    // Permission level required for /ailib commands (default 2 = operators).
     public int commandPermissionLevel = 2;
 
-    // --- LLM ---
-    public String llmSystemPrompt = "You are a helpful assistant. Answer briefly and clearly.";
+    // LLM
+    public String llmSystemPrompt = "You are a helpful assistant. Always answer in English, briefly and clearly.";
     public int llmMaxTokens = 128;
     public int llmContextSize = 2048;
     public double llmTemperature = 0.6;
@@ -45,15 +45,15 @@ public final class AiLibConfig {
      */
     public List<String> llmExtraArgs = List.of("-no-cnv");
 
-    // --- TTS ---
+    // TTS
     public int ttsTimeoutSeconds = 15;
 
-    // --- STT ---
+    // STT
     public String sttLanguage = "auto";
     public int sttThreads = 2;
     public int sttTimeoutSeconds = 30;
 
-    // --- Downloads ---
+    // Downloads
     public int maxParallelDownloads = 3;
     /**
      * Domains models registered by third-party mods may be downloaded from. Checked against the host
@@ -110,12 +110,12 @@ public final class AiLibConfig {
         return defaults;
     }
 
-    /** Drops the cache and re-reads the file from disk. */
+    // Drops the cache and re-reads the file from disk.
     public static synchronized void reload() {
         instance = load();
     }
 
-    /** Repairs nulls and nonsensical values coming from a hand-edited JSON file. */
+    // Repairs nulls and nonsensical values coming from a hand-edited JSON file.
     public void sanitize() {
         AiLibConfig d = new AiLibConfig();
         if (llmSystemPrompt == null) llmSystemPrompt = d.llmSystemPrompt;

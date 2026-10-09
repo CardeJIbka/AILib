@@ -12,7 +12,7 @@ public enum PromptFormat {
     GEMMA,
     RAW;      // no template: the prompt is sent as is
 
-    /** End-of-answer markers of all supported formats plus llama-cli's own status line. */
+    // End-of-answer markers of all supported formats plus llama-cli's own status line.
     public static final List<String> STOP_MARKERS = List.of(
             "<|eot_id|>", "<|im_end|>", "<end_of_turn>", "<|end_of_text|>",
             "<|endoftext|>", "</s>", "[end of text]", "[ Prompt:");

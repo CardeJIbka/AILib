@@ -49,7 +49,7 @@ public final class AiLibBootstrap {
     private AiLibBootstrap() {
     }
 
-    // ---------- Native binaries ----------
+    // Native binaries
 
     public static boolean isNativeReady(NativeConfig.AiModule module) {
         return module.resolveExecutable() != null;
@@ -123,7 +123,7 @@ public final class AiLibBootstrap {
         }
     }
 
-    // ---------- Models ----------
+    // Models
 
     private static final class FileClaim {
         final String url;
@@ -274,7 +274,7 @@ public final class AiLibBootstrap {
         }
     }
 
-    /** Must be called while holding LOCK. */
+    // Must be called while holding LOCK.
     private static void launch(ModelEntry entry) {
         entry.reset();
         ModelSpec spec = entry.spec;
@@ -362,7 +362,7 @@ public final class AiLibBootstrap {
         }
     }
 
-    /** Makes sure one file is present and valid; runs under the per-file lock. */
+    // Makes sure one file is present and valid; runs under the per-file lock.
     private static void ensureFile(ModelEntry entry, ModelFile f, Path target, String taskId) throws DownloadException {
         if (Files.exists(target)) {
             if (f.sha256() == null) return;

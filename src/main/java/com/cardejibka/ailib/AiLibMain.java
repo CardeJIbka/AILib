@@ -52,12 +52,12 @@ public class AiLibMain implements ModInitializer {
         return dir;
     }
 
-    /** The permission level comes from config/ailib.json (commandPermissionLevel, default 2 = operator). */
+    // The permission level comes from config/ailib.json (commandPermissionLevel, default 2 = operator).
     private static boolean hasAccess(CommandSourceStack source) {
         return source.hasPermission(AiLibConfig.get().commandPermissionLevel);
     }
 
-    /** Sends a message from a background thread by hopping onto the server thread. */
+    // Sends a message from a background thread by hopping onto the server thread.
     private static void reply(CommandSourceStack source, String text, boolean failure) {
         Runnable send = () -> {
             if (failure) source.sendFailure(Component.literal(text));
@@ -85,7 +85,7 @@ public class AiLibMain implements ModInitializer {
         }
     }
 
-    /** STT files are only allowed inside the game directory; otherwise an operator could read any file on the server. */
+    // STT files are only allowed inside the game directory; otherwise an operator could read any file on the server.
     private static Path resolveSttPath(String raw) {
         Path gameDir = FabricLoader.getInstance().getGameDir().toAbsolutePath().normalize();
         Path resolved = gameDir.resolve(raw).normalize();

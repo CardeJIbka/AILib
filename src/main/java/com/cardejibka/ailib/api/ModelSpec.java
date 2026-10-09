@@ -53,7 +53,7 @@ public record ModelSpec(String id, EngineType engine, String fileName, String ur
         return new ModelFile(fileName, url, sha256);
     }
 
-    /** Main file followed by the companions. */
+    // Main file followed by the companions.
     public List<ModelFile> allFiles() {
         List<ModelFile> all = new ArrayList<>(companions.size() + 1);
         all.add(mainFile());

@@ -3,22 +3,6 @@ plugins {
 	id 'maven-publish'
 }
 
-// ---------------------------------------------------------------------------
-// Versioning and file naming
-//
-//   gradle.properties:  version=0.1.32-alpha   (MAJOR.MINOR.PATCH, optional -beta / -alpha)
-//
-//   The build splits it into:
-//     modVersion  0.1.32  plain SemVer. This goes INTO the jar (fabric.mod.json), the Maven coordinates
-//                         and the "version number" field on Modrinth/CurseForge.
-//     channel     alpha   only decorates the FILE NAME; pick the same channel in the upload form.
-//   It is NOT kept in the mod version on purpose: in SemVer "0.1.32-alpha" sorts BELOW "0.1.32", which
-//   would make dependency ranges such as ">=0.1.32" reject your own alpha builds.
-//
-//   Result: ailib-<mc>-fabric-<modVersion>[-<channel>].jar
-//   e.g.    ailib-1.21-fabric-0.1.32-alpha.jar   (a plain 0.1.32 gets no suffix)
-// ---------------------------------------------------------------------------
-
 def requireProp(String name) {
 	def v = project.findProperty(name)
 	if (v == null || v.toString().isBlank()) {
@@ -41,22 +25,17 @@ def baseName = (project.findProperty("archives_base_name") ?: "ailib").toString(
 def fileVersion = releaseChannel == "release" ? modVersion : "${modVersion}-${releaseChannel}".toString()
 def archiveBase = "${baseName}-${mcLabel}-fabric".toString()
 
-// `group` is taken from gradle.properties as is. Only the version is normalised.
 version = modVersion
 
 base {
 	archivesName = archiveBase
 }
 
-// Every jar task (dev jar, remapped jar, sources jars) gets the channel suffix in its file name.
-// project.version stays a clean SemVer, so fabric.mod.json and Maven are not affected.
 tasks.withType(Jar).configureEach {
 	archiveVersion = fileVersion
 }
 
 repositories {
-	// Loom adds the Minecraft/Fabric repositories itself. This block is only for your own extra
-	// dependencies (e.g. JNA for Vosk, see the comment below).
 	mavenCentral()
 }
 
@@ -72,51 +51,35 @@ loom {
 }
 
 dependencies {
-	// Versions live in gradle.properties.
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
 	mappings loom.officialMojangMappings()
 	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
-	// Fabric API (HudRenderCallback, command API).
+	// Fabric API
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
-	// Unit tests cover pure logic (ModelSpec validation, domain allow-list, prompt formats, answer
-	// parsing). They deliberately do not touch Minecraft, so plain JUnit 5 is enough.
 	testImplementation platform("org.junit:junit-bom:5.10.2")
 	testImplementation "org.junit.jupiter:junit-jupiter"
-	// Required explicitly on Gradle 9+, otherwise tests may fail to start.
 	testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 
-	// JNA is not used by the current code (all natives run through ProcessBuilder). If you add it
-	// later (e.g. for Vosk) you need BOTH lines, otherwise it is missing from the final jar:
-	//
-	// implementation "net.java.dev.jna:jna:5.14.0"
-	// include "net.java.dev.jna:jna:5.14.0"
 }
 
 test {
 	useJUnitPlatform()
 
-	// Explicit wiring: with some Loom/Gradle 9 setups the test classes end up off the test worker's
-	// classpath, which shows up as "ClassNotFoundException: <the test class itself>".
 	testClassesDirs = sourceSets.test.output.classesDirs
 	classpath = sourceSets.test.runtimeClasspath
 
-	// Print why a test failed instead of just "Test process encountered an unexpected problem".
 	testLogging {
 		events "failed"
 		exceptionFormat "full"
 	}
 }
 
-// Values substituted into fabric.mod.json. A placeholder without a value here fails the build loudly.
 def modJsonProps = [
 		version              : version.toString(),
-		// Minimum Fabric Loader. Defaults to the loader you build with; lower it after testing on an older one.
 		loader_dependency    : (project.findProperty("loader_dependency") ?: (">=" + requireProp("loader_version"))).toString(),
-		// Declare only what you actually tested. Defaults to the exact build version if not set.
 		minecraft_dependency : (project.findProperty("minecraft_dependency") ?: requireProp("minecraft_version")).toString(),
-		// ">=" + the Fabric API version you build against (without the "+mc" part).
 		fabric_api_dependency: (">=" + requireProp("fabric_api_version").split("\\+")[0]).toString(),
 ]
 
@@ -134,7 +97,6 @@ tasks.withType(JavaCompile).configureEach {
 }
 
 java {
-	// Loom attaches sourcesJar to remapSourcesJar and to the "build" task.
 	withSourcesJar()
 
 	sourceCompatibility = JavaVersion.VERSION_21
@@ -148,13 +110,8 @@ jar {
 	from("LICENSE") {
 		rename { "${it}_$projectName" }
 	}
-	// Licenses of the third-party components the library downloads at runtime (llama.cpp / whisper.cpp /
-	// piper / models) are NOT part of the jar: they are not distributed with the mod, they are fetched
-	// separately on the player's machine. See THIRD_PARTY_NOTICES.md in the repository root.
 }
 
-// Sanity check before you upload anything: the built jar must carry a clean SemVer version and
-// no unresolved ${placeholders} (the two classic mistakes: "unspecified" and a literal "${version}").
 tasks.register("verifyRelease") {
 	group = "verification"
 	description = "Checks the remapped jar: SemVer version, no unresolved placeholders."
@@ -186,8 +143,6 @@ tasks.named("build") {
 	dependsOn tasks.named("verifyRelease")
 }
 
-// Maven publication. Nothing to configure for Modrinth: it serves every project on its own Maven
-// (maven.modrinth:<slug>:<version number>). Use `./gradlew publishToMavenLocal` to test the pom locally.
 publishing {
 	publications {
 		create("mavenJava", MavenPublication) {
@@ -209,14 +164,5 @@ publishing {
 	}
 
 	repositories {
-		// Add your own Maven repository here if you ever want one, for example:
-		// maven {
-		//     name = "MyRepo"
-		//     url = uri("https://maven.example.com/releases")
-		//     credentials {
-		//         username = project.findProperty("mavenUser") ?: System.getenv("MAVEN_USER")
-		//         password = project.findProperty("mavenPassword") ?: System.getenv("MAVEN_PASSWORD")
-		//     }
-		// }
 	}
 }

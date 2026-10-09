@@ -15,7 +15,7 @@ final class ProcessUtil {
         }
     }
 
-    /** Kills the process and waits for it to exit so the reader threads get EOF. */
+    // Kills the process and waits for it to exit so the reader threads get EOF.
     static void killAndWait(Process process) {
         process.destroyForcibly();
         try {

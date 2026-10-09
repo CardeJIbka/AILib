@@ -65,7 +65,7 @@ public final class AiLib {
     private AiLib() {
     }
 
-    // ---------- Engine replacement ----------
+    // Engine replacement
 
     /**
      * Replaces the LLM backend. A custom engine manages its own runtime: AiLib then relies on
@@ -77,7 +77,7 @@ public final class AiLib {
 
     public static void setSttEngine(SttEngine engine) { sttEngine = Objects.requireNonNull(engine); }
 
-    // ---------- Downloads and model management ----------
+    // Downloads and model management
 
     /**
      * Called from AiLibMain.onInitialize(). Only does anything with bootstrapDefaults=true in the config
@@ -115,17 +115,17 @@ public final class AiLib {
         return AiLibBootstrap.register(spec);
     }
 
-    /** Compatibility shortcut for {@code register(spec).future()}. Does not throw. */
+    // Compatibility shortcut for {@code register(spec).future()}. Does not throw.
     public static CompletableFuture<Boolean> registerModel(ModelSpec spec) {
         return register(spec).future();
     }
 
-    /** Handle of a registered model, or null. */
+    // Handle of a registered model, or null
     public static ModelHandle getModel(String id) {
         return AiLibBootstrap.getModel(id);
     }
 
-    /** All registered models. */
+    // All registered models
     public static List<ModelHandle> models() {
         return AiLibBootstrap.getModels();
     }
@@ -142,7 +142,7 @@ public final class AiLib {
         };
     }
 
-    /** Subscribes to the progress of every download (natives and models), e.g. for a custom HUD. */
+    // Subscribes to the progress of every download (natives and models), e.g. for a custom HUD.
     public static void subscribeProgress(ProgressSink sink) {
         ProgressBus.subscribe(sink);
     }
@@ -151,7 +151,7 @@ public final class AiLib {
         ProgressBus.unsubscribe(sink);
     }
 
-    // ---------- LLM ----------
+    // LLM
 
     public static String generate(String prompt) {
         return generate(LlmRequest.of(prompt), DEFAULT_LLM_MODEL);
@@ -180,7 +180,7 @@ public final class AiLib {
         return CompletableFuture.supplyAsync(() -> generate(request, model), AiLibExecutors.CALL_EXECUTOR);
     }
 
-    // ---------- TTS ----------
+    // TTS
 
     public static byte[] synthesize(String text) {
         return synthesize(text, DEFAULT_TTS_VOICE);
@@ -201,7 +201,7 @@ public final class AiLib {
         return CompletableFuture.supplyAsync(() -> synthesize(text, voice), AiLibExecutors.CALL_EXECUTOR);
     }
 
-    // ---------- STT ----------
+    // STT
 
     public static String transcribe(Path wavAudioPath) {
         return transcribe(wavAudioPath, DEFAULT_STT_MODEL);
@@ -222,7 +222,7 @@ public final class AiLib {
         return CompletableFuture.supplyAsync(() -> transcribe(wavAudioPath, model), AiLibExecutors.CALL_EXECUTOR);
     }
 
-    // ---------- Internals ----------
+    // Internals
 
     /**
      * @param builtInEngine     true if the engine is one of the bundled ones (their natives are downloaded by AiLib)

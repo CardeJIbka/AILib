@@ -14,7 +14,7 @@ import java.util.stream.Stream;
 
 public class NativeConfig {
 
-    /** The sha256 is optional in the record, but for executables it should always be filled in. */
+    // The sha256 is optional in the record, but for executables it should always be filled in.
     public record PlatformBinary(String downloadUrl, String expectedFile, String sha256) {
         public PlatformBinary(String downloadUrl, String expectedFile) {
             this(downloadUrl, expectedFile, null);

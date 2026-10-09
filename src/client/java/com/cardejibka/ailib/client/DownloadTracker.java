@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DownloadTracker implements ProgressSink {
 
     public record TaskState(String id, String label, long downloaded, long total, long startedAtMs) {
-        /** 0..1, or -1 if the server sent no size (the "unknown" indicator). */
+        // 0..1, or -1 if the server sent no size (the "unknown" indicator)
         public float progress() {
             return total > 0 ? (float) downloaded / total : -1f;
         }
@@ -41,7 +41,7 @@ public class DownloadTracker implements ProgressSink {
         return !ACTIVE_TASKS.isEmpty();
     }
 
-    /** Sorted by start time: older tasks (usually closer to completion) first. */
+    // Sorted by start time: older tasks (usually closer to completion) first.
     public static List<TaskState> getActiveTasks() {
         return ACTIVE_TASKS.values().stream()
                 .sorted(Comparator.comparingLong(TaskState::startedAtMs))

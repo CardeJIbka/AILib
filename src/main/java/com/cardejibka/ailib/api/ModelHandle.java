@@ -24,23 +24,23 @@ public interface ModelHandle {
         return state() == State.READY;
     }
 
-    /** 0..1 for the file currently being downloaded, or -1 if unknown. */
+    // 0..1 for the file currently being downloaded, or -1 if unknown
     float progress();
 
-    /** null unless the state is FAILED. */
+    // null unless the state is FAILED
     FailureReason failureReason();
 
     String failureMessage();
 
-    /** Completes with true/false when the current attempt finishes. After retry() a new future is returned. */
+    // Completes with true/false when the current attempt finishes. After retry() a new future is returned
     CompletableFuture<Boolean> future();
 
-    /** Path of the main model file on disk. */
+    // Path of the main model file on disk
     Path path();
 
-    /** Retries the download if the state is FAILED. @return true if a retry was started */
+    // Retries the download if the state is FAILED. @return true if a retry was started
     boolean retry();
 
-    /** Deletes the files and unregisters the model. Not possible while downloading. @return true on success */
+    // Deletes the files and unregisters the model. Not possible while downloading. @return true on success
     boolean delete();
 }

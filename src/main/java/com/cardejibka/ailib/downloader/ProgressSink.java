@@ -6,7 +6,7 @@ package com.cardejibka.ailib.downloader;
  * references: this interface lives in common code.
  */
 public interface ProgressSink {
-    /** total == -1 if the server sent no Content-Length (the "unknown size" indicator). */
+    // total == -1 if the server sent no Content-Length (the "unknown size" indicator).
     void onProgress(String taskId, String label, long downloaded, long total);
 
     default void onFinished(String taskId, boolean success) {

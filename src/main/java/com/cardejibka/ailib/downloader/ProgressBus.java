@@ -52,7 +52,7 @@ public final class ProgressBus {
         }
     }
 
-    /** -1 if no progress event has been published for this task yet. */
+    // -1 if no progress event has been published for this task yet.
     public static int getLastPercent(String taskId) {
         return LATEST_PERCENT.getOrDefault(taskId, -1);
     }
